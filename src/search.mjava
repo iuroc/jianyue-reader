@@ -1,0 +1,468 @@
+// 搜索页：首次进入先建索引（4 线程、分片落盘、可断点），建完才允许输入。
+// 索引期间离开页面不影响后台推进，回来继续显示进度。
+
+import android.graphics.drawable.GradientDrawable;
+import android.text.Editable;
+import android.text.TextUtils;
+import android.text.TextWatcher;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public void first() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("indexer");
+	ui_init(ui_root());
+	build();
+}
+
+public void second() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void again() {
+	i.fn("ui");
+	ui_insets();
+	sr_tick();
+}
+
+public void back() {
+	activity.finish();
+}
+
+public void sr_wire() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("indexer");
+	i.fn("store");
+}
+
+public void build() {
+	View bg = ui_layer("bg");
+	if (bg != null) {
+		bg.setBackgroundColor(ui_color(th_bg()));
+	}
+	View safe = ui_layer("safe");
+	if (safe == null) {
+		return;
+	}
+
+	LinearLayout page = ui_col();
+	ui_add((ViewGroup) safe, page, -1, -1);
+
+	// 顶部：返回 + 输入框
+	LinearLayout bar = ui_row();
+	bar.setGravity(Gravity.CENTER_VERTICAL);
+	bar.setPadding(ui_dp(8), ui_dp(8), ui_dp(16), ui_dp(8));
+
+	bar.addView(wg_iconButton("back", 24, th_ink1(), 48, new Runnable() {
+		public void run() {
+			back();
+		}
+	}));
+
+	EditText input = new EditText(activity);
+	input.setSingleLine(true);
+	input.setHint("搜索书名或作者");
+	input.setHintTextColor(ui_color(th_ink2()));
+	input.setTextColor(ui_color(th_ink1()));
+	input.setTextSize(17);
+	input.setBackgroundColor(ui_color("#00000000"));
+	input.setPadding(ui_dp(4), 0, ui_dp(4), 0);
+	input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+	bar.addView(input, new LinearLayout.LayoutParams(0, ui_dp(44), 1f));
+	ui_reg("sr.input", input);
+
+	input.addTextChangedListener(new TextWatcher() {
+		public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+		}
+		public void onTextChanged(CharSequence s, int a, int b, int c) {
+		}
+		public void afterTextChanged(Editable e) {
+			sr_query(String.valueOf(e));
+		}
+	});
+
+	// 键盘上的搜索键：记一条历史再查
+	input.setOnEditorActionListener(new TextView.OnEditorActionListener() {
+		public boolean onEditorAction(TextView v, int actionId, KeyEvent ev) {
+			sr_histAdd(String.valueOf(v.getText()));
+			return true;
+		}
+	});
+
+	page.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	FrameLayout content = ui_frame();
+	ui_addWeight(page, content, -1, 0, 1f);
+	ui_reg("sr.content", content);
+
+	ui_log("search build ok");
+	sr_tick();
+}
+
+// ---------- 索引状态 ----------
+
+public void sr_tick() {
+	sr_wire();
+	// 书刊库在进主界面前就已建好；万一被清掉，交给全局进度页，搜索页不再自带进度
+	if (!ix_ready()) {
+		i.uigo("boot.iyu");
+		return;
+	}
+	sr_enable();
+	EditText input = (EditText) ui_get("sr.input");
+	String now = input == null ? "" : String.valueOf(input.getText());
+	if (now.trim().length() == 0) {
+		sr_home();
+	}
+}
+
+
+public void sr_enable() {
+	EditText input = (EditText) ui_get("sr.input");
+	if (input != null) {
+		input.setEnabled(true);
+		input.setHint("搜索书名或作者");
+	}
+}
+
+// ---------- 空查询态：历史搜索 / 占位 ----------
+
+public JSONArray sr_histList() {
+	try {
+		i.fn("store");
+		String s = st_get("sh.hist");
+		if (s == null || s.length() == 0) {
+			return new JSONArray();
+		}
+		return new JSONArray(s);
+	} catch (Throwable t) {
+		return new JSONArray();
+	}
+}
+
+// 新词置顶、去重、最多 10 条
+public void sr_histAdd(String q) {
+	String key = q == null ? "" : q.trim();
+	if (key.length() == 0) {
+		return;
+	}
+	try {
+		JSONArray old = sr_histList();
+		JSONArray nw = new JSONArray();
+		nw.put(key);
+		int n = 1;
+		for (int k = 0; k < old.length() && n < 10; k++) {
+			String v = old.optString(k, "");
+			if (v.length() == 0 || v.equals(key)) {
+				continue;
+			}
+			nw.put(v);
+			n++;
+		}
+		i.fn("store");
+		st_put("sh.hist", nw.toString());
+	} catch (Throwable t) {
+	}
+}
+
+public void sr_histClear() {
+	try {
+		i.fn("store");
+		st_put("sh.hist", "[]");
+	} catch (Throwable t) {
+	}
+	sr_home();
+}
+
+public void sr_home() {
+	sr_wire();
+	FrameLayout content = (FrameLayout) ui_get("sr.content");
+	if (content == null) {
+		return;
+	}
+	content.removeAllViews();
+
+	JSONArray hist = sr_histList();
+	if (hist.length() == 0) {
+		sr_placeholder();
+		return;
+	}
+
+	// 容器不留左右内边距：行要通到屏幕边缘，涟漪才铺满；缩进交给行自己
+	LinearLayout box = ui_col();
+	box.setPadding(0, ui_dp(16), 0, ui_dp(24));
+
+	LinearLayout head = ui_row();
+	head.setGravity(Gravity.CENTER_VERTICAL);
+	head.setPadding(ui_dp(20), 0, ui_dp(20), 0);
+	TextView label = ui_text("最近搜索", 13, th_ink2());
+	head.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+	TextView clear = ui_text("清空", 13, th_ink2());
+	clear.setGravity(Gravity.CENTER);
+	clear.setPadding(ui_dp(10), ui_dp(6), ui_dp(10), ui_dp(6));
+	wg_ripple(clear, 12, false);
+	clear.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			sr_histClear();
+		}
+	});
+	head.addView(clear);
+	box.addView(head, new LinearLayout.LayoutParams(-1, -2));
+
+	for (int k = 0; k < hist.length(); k++) {
+		String q = hist.optString(k, "");
+		if (q.length() > 0) {
+			box.addView(sr_histRow(q));
+		}
+	}
+	ui_fplace(content, box, -1, -2, Gravity.TOP | Gravity.LEFT);
+}
+
+public View sr_histRow(String q) {
+	TextView t = ui_text(q, 15, th_ink1());
+	t.setSingleLine(true);
+	t.setEllipsize(TextUtils.TruncateAt.END);
+	t.setPadding(ui_dp(20), ui_dp(14), ui_dp(20), ui_dp(14));
+	t.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+	wg_ripple(t, 0, false);
+	t.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			sr_pick(q);
+		}
+	});
+	return t;
+}
+
+// 点历史记录：回填输入框，TextWatcher 会接着发起查询
+public void sr_pick(String q) {
+	sr_wire();
+	EditText input = (EditText) ui_get("sr.input");
+	if (input == null) {
+		return;
+	}
+	input.setText(q);
+	input.setSelection(q.length());
+}
+
+// 没有任何搜索记录时的占位：图标 + 一行提示
+public void sr_placeholder() {
+	FrameLayout content = (FrameLayout) ui_get("sr.content");
+	if (content == null) {
+		return;
+	}
+	LinearLayout box = ui_col();
+	box.setGravity(Gravity.CENTER);
+	ImageView iv = ic_make("search", 56, th_placeholder());
+	box.addView(iv, new LinearLayout.LayoutParams(ui_dp(56), ui_dp(56)));
+	TextView t = ui_text("搜一搜书名或作者", 15, th_ink2());
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
+	tlp.topMargin = ui_dp(16);
+	t.setLayoutParams(tlp);
+	box.addView(t);
+	ui_fplace(content, box, -1, -1, Gravity.CENTER);
+}
+
+// ---------- 查询 ----------
+
+public void sr_query(String q) {
+	sr_wire();
+	sr_enable();
+	FrameLayout content = (FrameLayout) ui_get("sr.content");
+	if (content == null) {
+		return;
+	}
+	content.removeAllViews();
+
+	String key = q == null ? "" : q.trim();
+	if (key.length() == 0) {
+		sr_home();
+		return;
+	}
+	if (!ix_ready()) {
+		return;
+	}
+
+	JSONArray hits = ix_search(key);
+	if (hits == null || hits.length() == 0) {
+		LinearLayout empty = ui_col();
+		empty.setPadding(ui_dp(20), ui_dp(40), ui_dp(20), 0);
+		empty.addView(ui_text("没有找到「" + key + "」", 15, th_ink1()));
+		TextView sub = ui_text("换个书名或作者试试", 13, th_ink2());
+		LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+		slp.topMargin = ui_dp(8);
+		sub.setLayoutParams(slp);
+		empty.addView(sub);
+		ui_fplace(content, empty, -1, -2, Gravity.TOP | Gravity.LEFT);
+		return;
+	}
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	LinearLayout list = ui_col();
+	// 左右不留内边距：结果行要通到屏幕边缘，涟漪才铺满
+	list.setPadding(0, ui_dp(8), 0, ui_dp(24));
+	sv.addView(list, new FrameLayout.LayoutParams(-1, -2));
+
+	int nBook = 0;
+	int nMag = 0;
+	for (int k = 0; k < hits.length(); k++) {
+		JSONObject o = hits.optJSONObject(k);
+		if (o != null && "b".equals(o.optString("k", ""))) {
+			nBook++;
+		}
+		if (o != null && "m".equals(o.optString("k", ""))) {
+			nMag++;
+		}
+	}
+
+	if (nBook > 0) {
+		list.addView(sr_section("图书"));
+		for (int k = 0; k < hits.length(); k++) {
+			JSONObject o = hits.optJSONObject(k);
+			if (o != null && "b".equals(o.optString("k", ""))) {
+				list.addView(sr_row(o));
+			}
+		}
+	}
+	if (nMag > 0) {
+		list.addView(sr_section("期刊"));
+		for (int k = 0; k < hits.length(); k++) {
+			JSONObject o = hits.optJSONObject(k);
+			if (o != null && "m".equals(o.optString("k", ""))) {
+				list.addView(sr_row(o));
+			}
+		}
+	}
+
+	ui_fplace(content, sv, -1, -1, Gravity.TOP | Gravity.LEFT);
+}
+
+public TextView sr_section(String name) {
+	TextView t = ui_text(name, 15, th_ink2());
+	t.setPadding(ui_dp(16), 0, ui_dp(16), 0);
+	LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+	lp.topMargin = ui_dp(12);
+	lp.bottomMargin = ui_dp(4);
+	t.setLayoutParams(lp);
+	return t;
+}
+
+public View sr_row(JSONObject o) {
+	boolean isMag = "m".equals(o.optString("k", ""));
+	String title = o.optString("t", "");
+	String sub = o.optString("a", "");
+
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+	row.setPadding(ui_dp(16), ui_dp(8), ui_dp(16), ui_dp(8));
+	row.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+
+	FrameLayout coverBox = ui_frame();
+	LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(ui_dp(40), ui_dp(60));
+	clp.rightMargin = ui_dp(12);
+	coverBox.setLayoutParams(clp);
+	// 骨架屏占位，不放首字
+	wg_coverBg(coverBox, 2);
+
+	ImageView iv = ui_image();
+	iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+	ui_fplace(coverBox, iv, -1, -1, Gravity.TOP | Gravity.LEFT);
+	String cover = o.optString("c", "");
+	if (cover.length() > 0) {
+		try {
+			i.us(iv, "src", cover);
+		} catch (Throwable t) {
+		}
+	}
+	row.addView(coverBox);
+
+	LinearLayout col = ui_col();
+	TextView t = ui_text(title, 15, th_ink1());
+	t.setSingleLine(true);
+	t.setEllipsize(TextUtils.TruncateAt.END);
+	col.addView(t);
+	if (sub.length() > 0) {
+		TextView s = ui_text(sub, 13, th_ink2());
+		s.setSingleLine(true);
+		s.setEllipsize(TextUtils.TruncateAt.END);
+		LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+		slp.topMargin = ui_dp(4);
+		s.setLayoutParams(slp);
+		col.addView(s);
+	}
+	row.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
+
+	JSONObject picked = o;
+	row.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			sr_open(picked);
+		}
+	});
+	wg_ripple(row, 0, false);
+	return row;
+}
+
+public void sr_open(JSONObject o) {
+	try {
+		// 点开结果说明这个词有用，记进历史
+		EditText srIn = (EditText) ui_get("sr.input");
+		if (srIn != null) {
+			sr_histAdd(String.valueOf(srIn.getText()));
+		}
+		boolean isMag = "m".equals(o.optString("k", ""));
+		String sp = o.optString("sp", "");
+		String surl = o.optString("s", "");
+		int id = o.optInt("id", 0);
+
+		// 详情直接用本地书刊库里的整条记录，不再回服务器
+		i.fn("indexer");
+		JSONObject full = ix_libFind(sp, isMag ? "" : surl, isMag ? id : 0);
+		if (full != null) {
+			i.sss(isMag ? "detail.mag" : "detail.book", full.toString());
+			i.uigo(isMag ? "magdetail.iyu" : "bookdetail.iyu");
+			return;
+		}
+
+		// 兜底：本地库缺这条（例如库刚被清掉）时用索引里的瘦记录，至少能进页面
+		if (isMag) {
+			JSONObject m = new JSONObject();
+			m.put("id", id);
+			m.put("name", o.optString("t", ""));
+			m.put("coverPath", o.optString("c", ""));
+			m.put("summary", "");
+			i.sss("detail.mag", m.toString());
+			i.uigo("magdetail.iyu");
+		} else {
+			JSONObject b = new JSONObject();
+			b.put("title", o.optString("t", ""));
+			b.put("author", o.optString("a", ""));
+			b.put("cover", o.optString("c", ""));
+			b.put("summary", "");
+			b.put("surl", surl);
+			i.sss("detail.book", b.toString());
+			i.uigo("bookdetail.iyu");
+		}
+	} catch (Throwable t) {
+		ui_log("sr_open " + t);
+	}
+}

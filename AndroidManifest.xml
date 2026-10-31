@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<iapp>
+<title>简阅</title>
+<icon>icon.png</icon>
+<packageName>com.jianyue.reader</packageName>
+<versionName>1.0</versionName>
+<versionint>1</versionint>
+<sdk>21</sdk>
+<yuv>3</yuv>
+
+<remark>简约书刊阅读器</remark>
+<Permissions>android.permission.READ_EXTERNAL_STORAGE
+android.permission.REQUEST_INSTALL_PACKAGES
+android.permission.INTERNET
+android.permission.WRITE_EXTERNAL_STORAGE</Permissions>
+<createTime>2026-10-30 21:54:49</createTime>
+<upTime>2026-10-30 21:54:49</upTime>
+</iapp>

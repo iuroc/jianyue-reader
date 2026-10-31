@@ -1,0 +1,333 @@
+// 我的 Tab：主题切换、阅读历史、关于。
+
+import android.content.res.ColorStateList;
+import android.text.TextUtils;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public void mine_wire() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("store");
+}
+
+public View mine_page() {
+	mine_wire();
+	LinearLayout page = ui_col();
+	page.addView(wg_header("我的", "", null, null));
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	ui_addWeight(page, sv, -1, 0, 1f);
+
+	// 容器不留左右内边距：可点行要通到屏幕边缘，涟漪才铺满；缩进交给各行自己
+	LinearLayout body = ui_col();
+	body.setPadding(0, ui_dp(16), 0, ui_dp(24));
+	sv.addView(body, new FrameLayout.LayoutParams(-1, -2));
+
+	// 主题
+	TextView themeLabel = ui_text("主题", 13, th_ink2());
+	themeLabel.setPadding(ui_dp(20), 0, ui_dp(20), 0);
+	body.addView(themeLabel);
+
+	body.addView(mine_themeToggle());
+
+	body.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	// 阅读历史
+	TextView histLabel = ui_text("阅读历史", 17, th_ink1());
+	histLabel.setPadding(ui_dp(20), 0, ui_dp(20), 0);
+	LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-1, -2);
+	hlp.topMargin = ui_dp(20);
+	hlp.bottomMargin = ui_dp(4);
+	histLabel.setLayoutParams(hlp);
+	body.addView(histLabel);
+
+	LinearLayout hist = ui_col();
+	body.addView(hist, new LinearLayout.LayoutParams(-1, -2));
+	mine_history(hist);
+
+	// 搜索索引
+	mine_indexSection(body);
+
+	// 关于
+	mine_aboutSection(body);
+
+	TextView ver = ui_text("简阅 " + ui_versionText() + " · 歌德借阅机内容", 13, th_ink2());
+	ver.setPadding(ui_dp(20), 0, ui_dp(20), 0);
+	LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(-1, -2);
+	vlp.topMargin = ui_dp(28);
+	ver.setLayoutParams(vlp);
+	body.addView(ver);
+
+	ui_log("mine build ok");
+	return page;
+}
+
+// 主题切换：Chip 只当外观用，选中逻辑自己管 —— 不依赖 ChipGroup 的勾选回调
+// （ChipGroup.setOnCheckedStateChangeListener 在这套解释器里没有回调过来）
+public ChipGroup mine_themeToggle() {
+	ChipGroup g = new ChipGroup(activity);
+	LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(-1, -2);
+	glp.topMargin = ui_dp(8);
+	glp.bottomMargin = ui_dp(20);
+	glp.leftMargin = ui_dp(20);
+	glp.rightMargin = ui_dp(20);
+	g.setLayoutParams(glp);
+
+	String[] names = {"纸", "夜"};
+	int cur = th_mode();
+	for (int k = 0; k < 2; k++) {
+		int mode = k;
+		Chip c = new Chip(activity);
+		c.setText(names[k]);
+		c.setTextSize(15);
+		// 关掉 Chip 自带的勾选：选中态由 mine_chipPaint 画，避免组件状态和真实主题不同步
+		c.setCheckable(false);
+		c.setCloseIconVisible(false);
+		c.setChipIconVisible(false);
+		c.setCheckedIconVisible(false);
+		mine_chipPaint(c, mode, mode == cur);
+		c.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				mine_themePick(mode);
+			}
+		});
+		ChipGroup.LayoutParams clp = new ChipGroup.LayoutParams(-2, -2);
+		clp.rightMargin = ui_dp(8);
+		g.addView(c, clp);
+	}
+	return g;
+}
+
+// 点击回调是新解释器：先 i.fn 再碰主题 / 存储函数
+public void mine_themePick(int mode) {
+	i.fn("theme");
+	if (th_mode() == mode) {
+		return;
+	}
+	th_set(mode);
+	// 切到夜色时，阅读底色若不是夜色就一并改成夜色：夜里进阅读器必须稳定是黑的。
+	// 反向不动：白天模式下阅读器用哪档底色都允许；夜间里用户自己改成白天底色，
+	// 那是阅读器的局部选择，不属于「切换外部主题」
+	if (th_night()) {
+		i.fn("store");
+		if (st_readerBg() != 3) {
+			st_setInt("rd.bg", 3);
+		}
+	}
+	i.fn("ui");
+	ui_statusIcons(th_mode() != 1);
+	// 整壳重建：新壳里的 chip 会按新主题重新上色
+	i.fn("home");
+	home_repaint();
+}
+
+// 每个 chip 画成它代表的那套主题（纸就是纸色、夜就是夜色），选中用 2dp 朱砂描边区分。
+// 不要用「当前主题的墨色实心」——那样纸色主题下「纸」会被涂成深墨色，看上去像「夜」。
+public void mine_chipPaint(Chip c, int mode, boolean on) {
+	c.setChipBackgroundColor(ColorStateList.valueOf(ui_color(th_bgOf(mode))));
+	c.setTextColor(ui_color(th_inkOf(mode)));
+	c.setChipStrokeWidth(ui_dp(on ? 2 : 1));
+	c.setChipStrokeColor(ColorStateList.valueOf(ui_color(on ? th_accent() : th_hairline())));
+	c.setChipCornerRadius(ui_dp(18));
+	c.setChipMinHeight(ui_dp(36));
+	c.setEnsureMinTouchTargetSize(false);
+	c.setRippleColor(ColorStateList.valueOf(ui_color(th_ripple())));
+}
+
+public void home_repaint() {
+	i.fn("home");
+	repaint();
+}
+
+// 搜索索引：用户自己决定何时重建（书刊目录月级更新，用户该有手动刷新入口）
+public void mine_indexSection(LinearLayout body) {
+	TextView head = ui_text("搜索索引", 17, th_ink1());
+	head.setPadding(ui_dp(20), 0, ui_dp(20), 0);
+	LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-1, -2);
+	hlp.topMargin = ui_dp(28);
+	head.setLayoutParams(hlp);
+	body.addView(head);
+
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+	row.setPadding(ui_dp(20), ui_dp(14), ui_dp(20), ui_dp(14));
+	row.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+
+	LinearLayout col = ui_col();
+	TextView t = ui_text("重建索引", 15, th_ink1());
+	col.addView(t);
+	TextView s = ui_text("清空本地索引，重新抓取全部书刊目录", 13, th_ink2());
+	LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+	slp.topMargin = ui_dp(4);
+	s.setLayoutParams(slp);
+	col.addView(s);
+	row.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
+
+	ImageView chev = ic_make("chev", 18, th_ink2());
+	row.addView(chev, new LinearLayout.LayoutParams(ui_dp(18), ui_dp(18)));
+
+	row.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			// 交给全局进度页；旧库在新库建好前一直可用
+			i.sss("boot.rebuild", "1");
+			i.uigo("boot.iyu");
+		}
+	});
+	wg_ripple(row, 0, false);
+	body.addView(row);
+	body.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+}
+
+// 关于：作者、开源地址、合规声明都收在独立页，这里只留入口
+public void mine_aboutSection(LinearLayout body) {
+	TextView head = ui_text("关于", 17, th_ink1());
+	head.setPadding(ui_dp(20), 0, ui_dp(20), 0);
+	LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-1, -2);
+	hlp.topMargin = ui_dp(28);
+	head.setLayoutParams(hlp);
+	body.addView(head);
+
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+	row.setPadding(ui_dp(20), ui_dp(14), ui_dp(20), ui_dp(14));
+	row.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+
+	LinearLayout col = ui_col();
+	col.addView(ui_text("关于简阅", 15, th_ink1()));
+	TextView s = ui_text("作者 iuroc · 实验室试用版", 13, th_ink2());
+	LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+	slp.topMargin = ui_dp(4);
+	s.setLayoutParams(slp);
+	col.addView(s);
+	row.addView(col, new LinearLayout.LayoutParams(0, -2, 1f));
+
+	ImageView chev = ic_make("chev", 18, th_ink2());
+	row.addView(chev, new LinearLayout.LayoutParams(ui_dp(18), ui_dp(18)));
+
+	row.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			i.uigo("about.iyu");
+		}
+	});
+	wg_ripple(row, 0, false);
+	body.addView(row);
+	body.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+}
+
+// 我的页只铺最近 10 条：历史会一直变长，全量渲染会把这一页拖慢（BeanShell 下更明显）
+public void mine_history(LinearLayout host) {
+	JSONArray arr = null;
+	try {
+		i.fn("store");
+		arr = st_progressSorted();
+	} catch (Throwable t) {
+	}
+	if (arr == null || arr.length() == 0) {
+		TextView empty = ui_text("还没有阅读记录", 13, th_ink2());
+		LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(-1, -2);
+		elp.topMargin = ui_dp(12);
+		empty.setLayoutParams(elp);
+		host.addView(empty);
+		return;
+	}
+
+	int show = 10;
+	if (arr.length() < show) {
+		show = arr.length();
+	}
+	for (int k = 0; k < show; k++) {
+		JSONObject o = arr.optJSONObject(k);
+		if (o != null) {
+			host.addView(mine_histRow(o));
+		}
+	}
+	if (arr.length() > show) {
+		host.addView(mine_moreRow(arr.length()));
+	}
+}
+
+// 「查看全部」：整条记录一个不少，但要进独立页看，不占「我的」的建页时间
+public View mine_moreRow(int total) {
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+	row.setPadding(ui_dp(20), ui_dp(14), ui_dp(20), ui_dp(14));
+	row.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+
+	TextView t = ui_text("查看全部", 15, th_accent());
+	row.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
+
+	TextView c = ui_text("共 " + total + " 条", 13, th_ink2());
+	row.addView(c);
+
+	row.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			i.uigo("history.iyu");
+		}
+	});
+	wg_ripple(row, 0, false);
+
+	LinearLayout wrap = ui_col();
+	wrap.addView(row, new LinearLayout.LayoutParams(-1, -2));
+	wrap.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+	return wrap;
+}
+
+public View mine_histRow(JSONObject p) {
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+	row.setPadding(ui_dp(20), ui_dp(14), ui_dp(20), ui_dp(14));
+	row.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+
+	String title = p.optString("title", "");
+	String author = p.optString("author", "");
+	if (title.length() == 0) {
+		title = "未记录书名";
+	}
+	if (author.length() > 0) {
+		title = title + " · " + author;
+	}
+	TextView t = ui_text(title, 15, th_ink1());
+	t.setSingleLine(true);
+	t.setEllipsize(TextUtils.TruncateAt.END);
+	row.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
+
+	TextView meta = ui_text(p.optInt("page", 1) + " / " + p.optInt("pageAll", 1), 13, th_ink2());
+	row.addView(meta);
+
+	JSONObject picked = p;
+	row.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			try {
+				i.sss("reader.surl", picked.optString("surl", ""));
+				i.sss("reader.title", picked.optString("title", ""));
+				// 作者也要带过去：漏了的话阅读页会沿用上一个 i.sss 里的旧作者，再存回进度里
+				i.sss("reader.author", picked.optString("author", ""));
+				i.uigo("reader.iyu");
+			} catch (Throwable t) {
+			}
+		}
+	});
+	wg_ripple(row, 0, false);
+
+	LinearLayout wrap = ui_col();
+	wrap.addView(row, new LinearLayout.LayoutParams(-1, -2));
+	wrap.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+	return wrap;
+}

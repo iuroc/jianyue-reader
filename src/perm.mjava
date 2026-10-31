@@ -1,0 +1,58 @@
+// 入口权限闸门。
+// 本应用真正只需要「网络访问」：数据全部写到 filesDir（应用私有目录），不读外部存储、
+// 也不安装 APK —— manifest 里另外三个声明是模板遗留，可择机清掉。
+// INTERNET 属于安装期权限，正常装完就有；这里仍做检查，用于定制 ROM / 策略关闭的情况，
+// 以及以后新增运行时权限时不用再改入口逻辑。
+
+public String[] pm_needed() {
+	return new String[] { "android.permission.INTERNET" };
+}
+
+public String pm_label(String p) {
+	if ("android.permission.INTERNET".equals(p)) {
+		return "网络访问（获取书刊目录与正文）";
+	}
+	return p;
+}
+
+public boolean pm_granted(String p) {
+	try {
+		// 0 = PackageManager.PERMISSION_GRANTED；用字面量，避免解析 framework 静态常量
+		return activity.checkSelfPermission(p) == 0;
+	} catch (Throwable t) {
+		// 低版本或查询失败时不要拦人：宁可放行进页面，也别让用户卡在门口
+		return true;
+	}
+}
+
+public String[] pm_missing() {
+	String[] need = pm_needed();
+	int n = 0;
+	for (int k = 0; k < need.length; k++) {
+		if (!pm_granted(need[k])) {
+			n++;
+		}
+	}
+	String[] out = new String[n];
+	int j = 0;
+	for (int k = 0; k < need.length; k++) {
+		if (!pm_granted(need[k])) {
+			out[j] = need[k];
+			j++;
+		}
+	}
+	return out;
+}
+
+public boolean pm_ok() {
+	return pm_missing().length == 0;
+}
+
+// 系统授权框是异步的：结果回来后 Activity 会 resume，入口页在 again() 里重新校验
+public void pm_request() {
+	try {
+		activity.requestPermissions(pm_needed(), 1001);
+	} catch (Throwable t) {
+		i.syso("PERM ! " + t);
+	}
+}

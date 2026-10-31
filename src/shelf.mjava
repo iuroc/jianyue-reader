@@ -1,0 +1,304 @@
+// 三列书架网格 + 固定高度加载槽。图书与期刊共用。
+// 封面失败时露出纸色底 + 名称首字占位，不出现灰块。
+
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.text.TextUtils;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public int sh_colW() {
+	int gap = ui_dp(12) * 2;
+	int pad = ui_dp(16) * 2;
+	return (ui_screenW() - pad - gap) / 3;
+}
+
+public int sh_coverH() {
+	return sh_colW() * 3 / 2;
+}
+
+// 单行文字高度：用排版引擎实测，别手算（行距是在字体自身行高之上再乘倍率的）
+public int sh_lineH() {
+	try {
+		TextView probe = new TextView(activity);
+		ui_textSize(probe, 13);
+		probe.setIncludeFontPadding(false);
+		int h = probe.getLineHeight();
+		if (h > 0) {
+			return h;
+		}
+	} catch (Throwable t) {
+	}
+	return ui_dp(22);
+}
+
+public int sh_cellH() {
+	return sh_coverH() + ui_dp(8) + sh_lineH() * 3 + ui_dp(8);
+}
+
+public LinearLayout sh_grid() {
+	LinearLayout grid = ui_col();
+	grid.setPadding(ui_dp(16), ui_dp(8), ui_dp(16), 0);
+	grid.setClipChildren(false);
+	// clipToPadding 默认 true，会把子控件裁在 padding 之内；
+	// 网格左右各有 16dp padding，第一列/最后一列的高亮就往外面扩不出去
+	grid.setClipToPadding(false);
+	return grid;
+}
+
+public LinearLayout sh_row() {
+	LinearLayout row = ui_row();
+	row.setPadding(0, 0, 0, ui_dp(24));
+	row.setClipChildren(false);
+	// 行底部有 24dp padding，不放开 clipToPadding 的话上下方向也扩不出去
+	row.setClipToPadding(false);
+	return row;
+}
+
+public View sh_gap() {
+	View v = new View(activity);
+	v.setLayoutParams(new LinearLayout.LayoutParams(ui_dp(12), 1));
+	return v;
+}
+
+public View sh_fill() {
+	View v = new View(activity);
+	v.setLayoutParams(new LinearLayout.LayoutParams(sh_colW(), 1));
+	return v;
+}
+
+// 把条目追加进网格：每 3 个一行，列间 12dp，末行补齐空位
+public void sh_append(LinearLayout grid, JSONArray arr, boolean isMag, Runnable onPick) {
+	if (grid == null || arr == null) {
+		return;
+	}
+	LinearLayout row = null;
+	int col = 0;
+	for (int k = 0; k < arr.length(); k++) {
+		JSONObject o = arr.optJSONObject(k);
+		if (o == null) {
+			continue;
+		}
+		if (col == 0) {
+			row = sh_row();
+			grid.addView(row, new LinearLayout.LayoutParams(-1, -2));
+		} else {
+			row.addView(sh_gap());
+		}
+		row.addView(sh_cell(o, isMag, onPick));
+		col++;
+		if (col == 3) {
+			col = 0;
+			row = null;
+		}
+	}
+	if (row != null) {
+		for (int k = col; k < 3; k++) {
+			row.addView(sh_gap());
+			row.addView(sh_fill());
+		}
+	}
+}
+
+public View sh_cell(JSONObject o, boolean isMag, Runnable onPick) {
+	int w = sh_colW();
+	// 外层用 FrameLayout：内容之外再加一层覆盖层承接点击与涟漪，
+	// 覆盖层作为最后一个子控件，必然画在封面之上（前景 drawable 盖不住 i.us 加载的图）
+	FrameLayout root = ui_frame();
+	root.setLayoutParams(new LinearLayout.LayoutParams(w, -2));
+	// 覆盖层要画到格子外面（伸进列间距），必须逐层关掉裁剪
+	root.setClipChildren(false);
+	LinearLayout cell = ui_col();
+	root.addView(cell, new FrameLayout.LayoutParams(-1, -2));
+
+	String title = isMag ? o.optString("name", "") : o.optString("title", "");
+
+	FrameLayout coverBox = ui_frame();
+	coverBox.setLayoutParams(new LinearLayout.LayoutParams(w, sh_coverH()));
+	// 封面加载前用骨架屏填充，不放「首字」占位
+	wg_coverBg(coverBox, 2);
+
+	ImageView iv = ui_image();
+	iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+	ui_fplace(coverBox, iv, -1, -1, Gravity.TOP | Gravity.LEFT);
+
+	String cover = isMag ? o.optString("coverPath", "") : o.optString("cover", "");
+	if (cover.length() == 0 && !isMag) {
+		cover = o.optString("bcover", "");
+	}
+	if (cover.length() > 0) {
+		try {
+			i.us(iv, "src", cover);
+		} catch (Throwable t) {
+			ui_log("cover " + t);
+		}
+	}
+	cell.addView(coverBox);
+
+	// 只锁行数、不锁像素高度：标题必占两行，作者必占一行，格子高度由排版引擎决定
+	// 书名最多两行、超出省略；不锁最小行数，格子高度随内容
+	TextView t = ui_text(title, 13, th_ink1());
+	t.setIncludeFontPadding(false);
+	t.setMaxLines(2);
+	t.setEllipsize(TextUtils.TruncateAt.END);
+
+	// 注意：cell 的 LayoutParams 在 addView 时已按 FrameLayout 给出，
+	// 这里再设 LinearLayout.LayoutParams 会因父容器类型不符在布局时崩
+
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
+	tlp.topMargin = ui_dp(8);
+	t.setLayoutParams(tlp);
+	cell.addView(t);
+
+	// 没有作者也保留一行，保证同排高度一致
+	String sub = isMag ? o.optString("ISSN", "") : o.optString("author", "");
+	TextView a = ui_text(sub, 13, th_ink2());
+	a.setIncludeFontPadding(false);
+	a.setMaxLines(2);
+	a.setEllipsize(TextUtils.TruncateAt.END);
+	LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-1, -2);
+	alp.topMargin = ui_dp(8);
+	a.setLayoutParams(alp);
+	cell.addView(a);
+
+	JSONObject picked = o;
+	Runnable runner = onPick;
+	// 覆盖层：透明、铺满格子，承接点击并对四周空隙上色；
+	// 封面图由 iApp 的图片加载器绘制在普通 View 之上，覆盖层盖不住它，
+	// 所以按下时额外把 ImageView 本身压暗一档，做到「整块都在反馈」
+	// 覆盖层：标准涟漪，铺满「格子 + 外扩 12dp」的范围
+	View layer = new View(activity);
+	wg_ripple(layer, 8, false);
+	layer.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			i.sss("sh.pick", picked.toString());
+			if (runner != null) {
+				runner.run();
+			}
+		}
+	});
+	// 先把格子真实高度量出来定死：外层是 wrap_content 时，match_parent 的覆盖层
+	// 会按整屏可用空间测量，高亮就会糊到上下排
+	int wspec = View.MeasureSpec.makeMeasureSpec(w, 1073741824); // 1073741824 = EXACTLY
+	int hspec = View.MeasureSpec.makeMeasureSpec(0, 0);           // 0 = UNSPECIFIED
+	root.measure(wspec, hspec);
+	int cellH = root.getMeasuredHeight();
+	root.setLayoutParams(new LinearLayout.LayoutParams(w, cellH));
+
+	// 覆盖层四周各外扩 8dp（原 12dp 的 2/3）：涟漪漫进间隙，但与隔壁还留 4dp 空档
+	FrameLayout.LayoutParams llp = new FrameLayout.LayoutParams(-1, -1);
+	int out = ui_dp(8);
+	llp.setMargins(-out, -out, -out, -out);
+	root.addView(layer, llp);
+	return root;
+}
+
+// ---------- 加载槽：总高 96dp 恒定 ----------
+
+public LinearLayout sh_moreSlot() {
+	LinearLayout slot = ui_col();
+	slot.setPadding(0, ui_dp(16), 0, ui_dp(24));
+	slot.setLayoutParams(new LinearLayout.LayoutParams(-1, ui_dp(96)));
+	slot.setGravity(Gravity.CENTER);
+	return slot;
+}
+
+// state: 0 可加载 / 1 载入中 / 2 已到底 / 3 失败
+public void sh_moreSet(LinearLayout slot, int state, Runnable onTap) {
+	if (slot == null) {
+		return;
+	}
+	slot.removeAllViews();
+
+	if (state == 2) {
+		TextView end = ui_text("没有更多了", 13, th_ink2());
+		end.setGravity(Gravity.CENTER);
+		slot.addView(end, new LinearLayout.LayoutParams(-1, ui_dp(56)));
+		return;
+	}
+
+	String label = "加载更多";
+	String color = th_ink1();
+	String stroke = th_hairline();
+	if (state == 1) {
+		label = "载入中…";
+		color = th_ink2();
+	} else if (state == 3) {
+		label = "重试";
+		color = th_accent();
+		stroke = th_accent();
+	}
+
+	TextView b = ui_text(label, 15, color);
+	b.setGravity(Gravity.CENTER);
+
+	GradientDrawable content = new GradientDrawable();
+	content.setCornerRadius(ui_dp(28));
+	content.setStroke(ui_dp(1), ui_color(stroke));
+	content.setColor(ui_color("#00000000"));
+
+	GradientDrawable mask = new GradientDrawable();
+	mask.setCornerRadius(ui_dp(28));
+	mask.setColor(Color.WHITE);
+
+	try {
+		RippleDrawable rd = new RippleDrawable(ColorStateList.valueOf(ui_color(th_ripple())), content, mask);
+		b.setBackground(rd);
+	} catch (Throwable t) {
+		b.setBackground(content);
+	}
+
+	if (state != 1 && onTap != null) {
+		Runnable tap = onTap;
+		b.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				tap.run();
+			}
+		});
+	}
+	slot.addView(b, new LinearLayout.LayoutParams(-1, ui_dp(56)));
+}
+
+// ---------- 骨架：3×3 占位 ----------
+
+public void sh_skeleton(LinearLayout grid) {
+	if (grid == null) {
+		return;
+	}
+	grid.removeAllViews();
+	for (int r = 0; r < 3; r++) {
+		LinearLayout row = sh_row();
+		grid.addView(row, new LinearLayout.LayoutParams(-1, -2));
+		for (int c = 0; c < 3; c++) {
+			if (c > 0) {
+				row.addView(sh_gap());
+			}
+			LinearLayout cell = ui_col();
+			cell.setLayoutParams(new LinearLayout.LayoutParams(sh_colW(), sh_cellH()));
+
+			View cover = wg_skeleton(2);
+			cell.addView(cover, new LinearLayout.LayoutParams(sh_colW(), sh_coverH()));
+
+			View l1 = wg_skeleton(2);
+			LinearLayout.LayoutParams l1p = new LinearLayout.LayoutParams(-1, ui_dp(12));
+			l1p.topMargin = ui_dp(8);
+			cell.addView(l1, l1p);
+
+			View l2 = wg_skeleton(2);
+			LinearLayout.LayoutParams l2p = new LinearLayout.LayoutParams(ui_dp(56), ui_dp(10));
+			l2p.topMargin = ui_dp(6);
+			cell.addView(l2, l2p);
+
+			row.addView(cell);
+		}
+	}
+}

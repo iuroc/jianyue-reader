@@ -1,0 +1,144 @@
+// 顶部分类栏：Material TabLayout（可滚动模式）。
+// 选中态、指示器、横向滚动位置、无障碍都由库维护，本模块只负责文案与配色。
+// 对外仍沿用 ct_build / ct_reselect / ct_picked / ct_selected / ct_setSelected。
+
+import android.graphics.Typeface;
+import android.view.View;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import com.google.android.material.tabs.TabLayout;
+
+public View ct_build(String[] labels, int selected, Runnable onPick) {
+	// 每次建页都新建（ui_reg 的句柄跨页面存活，不能复用上一页的 TabLayout）
+	TabLayout tl = new TabLayout(activity);
+	tl.setTabMode(TabLayout.MODE_SCROLLABLE);
+	tl.setTabGravity(TabLayout.GRAVITY_START);
+	tl.setSelectedTabIndicatorColor(ui_color(th_accent()));
+	tl.setTabIndicatorFullWidth(false);
+	tl.setBackgroundColor(ui_color(th_bg()));
+	tl.setLayoutParams(new LinearLayout.LayoutParams(-1, ui_dp(48)));
+
+	ct_fill(tl, labels);
+	ct_select(tl, selected);
+	ct_listen(tl, onPick);
+	ui_reg("ct.tabs", tl);
+	return tl;
+}
+
+public TabLayout ct_tabs() {
+	try {
+		Object o = ui_get("ct.tabs");
+		if (o != null) {
+			return (TabLayout) o;
+		}
+	} catch (Throwable t) {
+	}
+	return null;
+}
+
+public void ct_fill(TabLayout tl, String[] labels) {
+	if (tl == null || labels == null) {
+		return;
+	}
+	tl.removeAllTabs();
+	for (int k = 0; k < labels.length; k++) {
+		TextView tv = ui_text(labels[k], 15, th_ink2());
+		tv.setSingleLine(true);
+		TabLayout.Tab tab = tl.newTab();
+		tab.setCustomView(tv);
+		tl.addTab(tab);
+	}
+}
+
+// 换选中项：先让 TabLayout 自己选中，再统一走一遍配色
+public void ct_select(TabLayout tl, int idx) {
+	if (tl == null || idx < 0 || idx >= tl.getTabCount()) {
+		return;
+	}
+	TabLayout.Tab t = tl.getTabAt(idx);
+	if (t != null) {
+		tl.selectTab(t);
+	}
+	i.sss("ct.cur", String.valueOf(idx));
+	ct_style(tl, idx);
+}
+
+public void ct_style(TabLayout tl, int selected) {
+	if (tl == null) {
+		return;
+	}
+	for (int k = 0; k < tl.getTabCount(); k++) {
+		TabLayout.Tab t = tl.getTabAt(k);
+		if (t == null) {
+			continue;
+		}
+		View v = t.getCustomView();
+		if (v == null || !(v instanceof TextView)) {
+			continue;
+		}
+		TextView tv = (TextView) v;
+		boolean on = (k == selected);
+		tv.setTextColor(ui_color(on ? th_accent() : th_ink2()));
+		tv.setTypeface(null, on ? Typeface.BOLD : Typeface.NORMAL);
+	}
+}
+
+public void ct_listen(TabLayout tl, Runnable onPick) {
+	if (tl == null) {
+		return;
+	}
+	tl.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
+		public void onTabSelected(TabLayout.Tab t) {
+			int idx = t.getPosition();
+			i.sss("ct.pick", String.valueOf(idx));
+			i.sss("ct.cur", String.valueOf(idx));
+			ct_style(tl, idx);
+			if (onPick != null) {
+				onPick.run();
+			}
+		}
+
+		public void onTabUnselected(TabLayout.Tab t) {
+		}
+
+		// 重复点当前分类：不重载（与手写版一致）
+		public void onTabReselected(TabLayout.Tab t) {
+		}
+	});
+}
+
+// 只换配色，不重建条目、不动滚动位置
+public void ct_reselect(String[] labels, int selected, Runnable onPick) {
+	TabLayout tl = ct_tabs();
+	if (tl == null) {
+		return;
+	}
+	ct_style(tl, selected);
+}
+
+public int ct_selected() {
+	try {
+		Object o = i.sss("ct.cur");
+		if (o != null) {
+			return Integer.parseInt(String.valueOf(o));
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}
+
+public void ct_setSelected(int idx) {
+	i.sss("ct.cur", String.valueOf(idx));
+}
+
+public int ct_picked() {
+	try {
+		Object o = i.sss("ct.pick");
+		if (o != null) {
+			return Integer.parseInt(String.valueOf(o));
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}

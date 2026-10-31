@@ -1,0 +1,13 @@
+<View id="1" did="0" type="FrameLayout">
+<ppt>width=-1
+height=-1
+backgroundcolor=#F7F4EE</ppt>
+<event></event>
+</View>
+<UIEventset><eventItme type="loading">
+call(null, "mjava", "bookdetail.first")
+</eventItme><eventItme type="loadingComplete">
+call(null, "mjava", "bookdetail.second")
+</eventItme><eventItme type="resume">
+call(null, "mjava", "bookdetail.again")
+</eventItme></UIEventset>

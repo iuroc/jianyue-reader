@@ -1,0 +1,397 @@
+// 歌德借阅机接口封装：列表 / 期刊期次 / token / 目录 / 分段正文，带 token 与正文段缓存。
+// 不依赖任何视图模块，可被页面与索引器共用。
+
+import android.util.LruCache;
+
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+// ---------- 常量：只在这里出现一次 ----------
+
+public String net_base() {
+	return "https://gede.5read.com";
+}
+
+public String net_gedeid() {
+	return "84751638";
+}
+
+// 分页参数：全 App 唯一一处，改动会让页码、目录、进度全部失效
+public String net_w() {
+	return "1000";
+}
+
+public String net_h() {
+	return "2000";
+}
+
+public String net_fsize() {
+	return "18";
+}
+
+public int net_chunk() {
+	return 30;
+}
+
+// ---------- 失败原因 ----------
+// 只记「最近一次」的失败类型，给阅读器上屏和「查看详情」用。
+// 上屏的内容会被人看到，所以**只记类型**（HTTP 状态码、异常类名），不记请求地址/完整异常消息：
+// 那些带接口路径和参数，不该出现在界面上；完整信息只写 logcat。
+// 工作线程写 i.sss 可能抛 Hashtable.put on null，所以这里一律吞掉：诊断尽力而为，不影响请求本身。
+
+public void net_errClear() {
+	try {
+		i.sss("net.err", "");
+	} catch (Throwable t) {
+	}
+}
+
+public void net_err(String s) {
+	try {
+		i.sss("net.err", s);
+	} catch (Throwable t) {
+	}
+	i.syso("NET ERR " + s);
+}
+
+public String net_lastError() {
+	try {
+		Object o = i.sss("net.err");
+		return o == null ? "" : String.valueOf(o);
+	} catch (Throwable t) {
+		return "";
+	}
+}
+
+// ---------- HTTP ----------
+
+public String net_get(String url) {
+	HttpURLConnection c = null;
+	try {
+		URL u = new URL(url);
+		c = (HttpURLConnection) u.openConnection();
+		c.setConnectTimeout(15000);
+		c.setReadTimeout(30000);
+		c.setRequestProperty("User-Agent", "Mozilla/5.0");
+		c.setInstanceFollowRedirects(true);
+		int code = c.getResponseCode();
+		if (code < 200 || code >= 300) {
+			net_err("HTTP 状态码 " + code);
+			i.syso("NET HTTP " + code + " " + url);
+			c.disconnect();
+			return null;
+		}
+		InputStream in = c.getInputStream();
+		BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+		StringBuilder sb = new StringBuilder();
+		String line = r.readLine();
+		while (line != null) {
+			sb.append(line);
+			sb.append("\n");
+			line = r.readLine();
+		}
+		r.close();
+		c.disconnect();
+		return sb.toString();
+	} catch (Throwable t) {
+		// 界面上只给异常类名；完整堆栈与地址只进 logcat
+		net_err("网络异常 " + t.getClass().getName());
+		i.syso("NET ! " + t + " " + url);
+		try {
+			if (c != null) {
+				c.disconnect();
+			}
+		} catch (Throwable x) {
+		}
+		return null;
+	}
+}
+
+public String net_enc(String s) {
+	try {
+		return URLEncoder.encode(s, "UTF-8");
+	} catch (Throwable t) {
+		return s;
+	}
+}
+
+// ---------- 列表 ----------
+
+public JSONObject net_books(int cataid, int page, int pageSize) {
+	String u = net_base() + "/apis/touchBook/books.jspx?cataid=" + cataid + "&page=" + page
+			+ "&pageSize=" + pageSize + "&gedeid=" + net_gedeid();
+	return net_json(net_get(u));
+}
+
+public JSONObject net_magazines(int cataid, int page, int pageSize) {
+	String u = net_base() + "/apis/magazine/magazines.jspx?cataid=" + cataid + "&page=" + page
+			+ "&pageSize=" + pageSize + "&gedeid=" + net_gedeid();
+	return net_json(net_get(u));
+}
+
+public JSONObject net_magItems(int magazineid) {
+	String u = net_base() + "/apis/magazine/magazineItems.jspx?magazineid=" + magazineid;
+	return net_json(net_get(u));
+}
+
+public JSONObject net_json(String s) {
+	if (s == null) {
+		return null;
+	}
+	try {
+		return new JSONObject(s);
+	} catch (Throwable t) {
+		net_err("响应解析失败 " + t.getClass().getName());
+		return null;
+	}
+}
+
+// 统一取 msg：result==1 才有效，否则 null（result==0 是业务空，不是网络失败）
+public JSONObject net_msg(JSONObject d) {
+	try {
+		if (d == null) {
+			return null;
+		}
+		if (d.optInt("result", 0) != 1) {
+			net_err("服务端拒绝 result=" + d.optInt("result", 0) + "，errorMsg=" + d.optString("errorMsg", "（空）"));
+			return null;
+		}
+		return d.optJSONObject("msg");
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+// ---------- token ----------
+
+public String net_regex(String s, String pat) {
+	try {
+		Pattern p = Pattern.compile(pat);
+		Matcher m = p.matcher(s);
+		if (m.find()) {
+			return m.group(1);
+		}
+	} catch (Throwable t) {
+	}
+	return null;
+}
+
+// 返回 {sid, from, detailUrl}；按 surl 缓存，同一本书只换一次
+public JSONObject net_token(String surl) {
+	try {
+		Object cached = i.sss("jy.tk." + surl);
+		if (cached != null) {
+			return new JSONObject(String.valueOf(cached));
+		}
+	} catch (Throwable t) {
+	}
+
+	String full = surl;
+	if (!full.startsWith("http")) {
+		full = "https://" + full;
+	}
+	String html = net_get(net_base() + "/o/a.h?a=GEDE:" + net_enc(full));
+	if (html == null) {
+		// net_get 已经写过原因（HTTP 码 / 异常），保持那条，不再覆盖
+		return null;
+	}
+	String sid = net_regex(html, "sid:\\s*'([^']*)'");
+	String from = net_regex(html, "from:\\s*'([^']*)'");
+	String du = net_regex(html, "detailUrl:\\s*'([^']+)'");
+	if (sid == null || from == null || du == null) {
+		// 实测：书不存在时 /o/a.h 会被重定向到 error400.jsp，页面标题是 400、
+		// 正文「未查询到相关图书的 idKey 参数错误」，三个字段一个都没有
+		String tt = net_regex(html, "<title>([^<]*)</title>");
+		i.syso("NET token 缺字段 title=" + tt);
+		net_err("书不存在或已下线（接口返回错误页" + (tt == null ? "" : " " + tt) + "）");
+		return null;
+	}
+	JSONObject o = new JSONObject();
+	try {
+		o.put("sid", sid);
+		o.put("from", from);
+		o.put("detailUrl", du);
+	} catch (Throwable t) {
+		return null;
+	}
+	// 缓存写失败不能让已经拿到的令牌作废：i.sss 在工作线程写可能抛
+	// Hashtable.put on null，以前的写法会把 return 一起吞掉，表现成偶发「加载失败」
+	try {
+		i.sss("jy.tk." + surl, o.toString());
+	} catch (Throwable t) {
+		net_err("令牌缓存写入失败（不影响本次阅读）" + t.getClass().getName());
+	}
+	return o;
+}
+
+public void net_tokenDrop(String surl) {
+	try {
+		i.sss("jy.tk." + surl, null);
+	} catch (Throwable t) {
+	}
+}
+
+// ---------- 目录 / 正文 ----------
+
+public String net_readUrl(String surl, int psize, int page) {
+	JSONObject tk = net_token(surl);
+	if (tk == null) {
+		return null;
+	}
+	return net_base() + "/other/epub_epubRead_readNew.jspx?psize=" + psize + "&page=" + page
+			+ "&ucatalog=true&ctype=3&w=" + net_w() + "&h=" + net_h() + "&fsize=" + net_fsize()
+			+ "&sid=" + net_enc(tk.optString("sid", ""))
+			+ "&from=" + net_enc(tk.optString("from", ""))
+			+ "&detailUrl=" + net_enc(tk.optString("detailUrl", ""));
+}
+
+// psize=0：只取目录与总页数，contents 为空（比 psize=1 少一条正文）
+public JSONObject net_catalog(String surl) {
+	String u = net_readUrl(surl, 0, 1);
+	if (u == null) {
+		return null;
+	}
+	return net_msg(net_json(net_get(u)));
+}
+
+// 取 target 页所在的整段；段内页号偏移 = page - start
+public JSONObject net_chunkAt(String surl, int target) {
+	int size = net_chunk();
+	int start = ((target - 1) / size) * size + 1;
+	String key = surl + "|" + net_w() + net_h() + net_fsize() + "|" + start;
+	String hit = net_cacheGet(key);
+	if (hit != null) {
+		return net_json(hit);
+	}
+	String u = net_readUrl(surl, size, start);
+	if (u == null) {
+		return null;
+	}
+	String body = net_get(u);
+	if (body == null) {
+		return null;
+	}
+	JSONObject msg = net_msg(net_json(body));
+	if (msg != null) {
+		net_cachePut(key, body);
+	}
+	return msg;
+}
+
+// 只查缓存，不发请求
+public JSONObject net_chunkLookup(String surl, int target) {
+	int size = net_chunk();
+	int start = ((target - 1) / size) * size + 1;
+	String key = surl + "|" + net_w() + net_h() + net_fsize() + "|" + start;
+	String hit = net_cacheGet(key);
+	if (hit == null) {
+		return null;
+	}
+	// 缓存里存的是整段响应体，返回前必须取出 msg，与 net_chunkAt 保持一致
+	return net_msg(net_json(hit));
+}
+
+// 段起点（页号）与段内下标
+public int net_chunkStart(int target) {
+	int size = net_chunk();
+	int p = target;
+	if (p < 1) {
+		p = 1;
+	}
+	return ((p - 1) / size) * size + 1;
+}
+
+public String net_pageHtml(JSONObject chunk, int target) {
+	try {
+		JSONArray arr = chunk.optJSONArray("contents");
+		if (arr == null) {
+			return null;
+		}
+		int idx = target - net_chunkStart(target);
+		if (idx < 0 || idx >= arr.length()) {
+			return null;
+		}
+		return arr.optString(idx, null);
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public int net_pageAll(JSONObject chunk) {
+	try {
+		if (chunk == null) {
+			return 0;
+		}
+		return chunk.optInt("pageAll", 0);
+	} catch (Throwable t) {
+		return 0;
+	}
+}
+
+public int net_clampPage(int p, int pageAll) {
+	if (pageAll <= 0) {
+		return 1;
+	}
+	if (p < 1) {
+		return 1;
+	}
+	if (p > pageAll) {
+		return pageAll;
+	}
+	return p;
+}
+
+// ---------- 分段缓存：交给 android.util.LruCache ----------
+// 不重写 sizeOf（那是「继承类」，BeanShell 只能匿名实现接口），按条数淘汰：
+// 8 段 ≈ 1~2 MB，够覆盖来回翻页的窗口。
+
+public LruCache net_cache() {
+	Object o = i.sss("jy.cache.lru");
+	if (o == null) {
+		o = new LruCache(8);
+		i.sss("jy.cache.lru", o);
+	}
+	return (LruCache) o;
+}
+
+// 在 UI 线程先把缓存对象建出来：工作线程首次调用时 i.sss 写可能抛，
+// 那会让缓存静默失效（请求照发，只是每次都不命中）
+public void net_cacheInit() {
+	net_cache();
+}
+
+public String net_cacheGet(String key) {
+	try {
+		Object v = net_cache().get(key);
+		if (v == null) {
+			return null;
+		}
+		return String.valueOf(v);
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public void net_cachePut(String key, String val) {
+	try {
+		net_cache().put(key, val);
+	} catch (Throwable t) {
+		i.syso("NET cache ! " + t);
+	}
+}
+
+public void net_cacheClear() {
+	try {
+		net_cache().evictAll();
+	} catch (Throwable t) {
+	}
+}

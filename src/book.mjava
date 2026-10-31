@@ -1,0 +1,259 @@
+// 图书 Tab：顶部固定分类栏 + 三列书架 + 固定高度加载槽。
+// 分类 ID 是服务端事实；123（精品推荐）已无数据，不放进列表。
+
+import android.view.Gravity;
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public int[] bookCatIds() {
+	return new int[] {124, 125, 126, 127, 128, 129, 130, 131, 132, 140, 141};
+}
+
+public String[] bookCatNames() {
+	return new String[] {"诗歌散文", "小说传记", "科学技术", "国学经典", "历史文化",
+			"社会科学", "心理成长", "艺术审美", "哲学宗教", "教育研究", "家长尊享"};
+}
+
+public int book_flag(String key) {
+	try {
+		Object o = ui_get(key);
+		if (o != null) {
+			return Integer.parseInt(String.valueOf(o));
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}
+
+public void book_wire() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("shelf");
+	i.fn("cattabs");
+}
+
+public View book_page(int sel) {
+	book_wire();
+	LinearLayout page = ui_col();
+	page.addView(wg_header("图书", "", null, null));
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	View bar = ct_build(bookCatNames(), sel, new Runnable() {
+		public void run() {
+			book_switch();
+		}
+	});
+	page.addView(bar);
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	ui_addWeight(page, sv, -1, 0, 1f);
+	ui_reg("book.sv", sv);
+
+	LinearLayout body = ui_col();
+	sv.addView(body, new FrameLayout.LayoutParams(-1, -2));
+
+	LinearLayout grid = sh_grid();
+	body.addView(grid, new LinearLayout.LayoutParams(-1, -2));
+	ui_reg("book.grid", grid);
+
+	LinearLayout slot = sh_moreSlot();
+	body.addView(slot, new LinearLayout.LayoutParams(-1, ui_dp(96)));
+	ui_reg("book.slot", slot);
+	sh_moreSet(slot, 1, null);
+
+	ui_reg("book.page", page);
+	ui_reg("book.cat", String.valueOf(sel));
+	ui_reg("book.pg", "1");
+	ui_reg("book.more", "0");
+	ui_reg("book.loading", "1");
+
+	ct_setSelected(sel);
+	sh_skeleton(grid);
+	book_load(sel, 1);
+	return page;
+}
+
+public void book_switch() {
+	book_wire();
+	int idx = ct_picked();
+	if (idx == book_flag("book.cat")) {
+		return;
+	}
+	ct_setSelected(idx);
+	ui_reg("book.cat", String.valueOf(idx));
+	ui_reg("book.pg", "1");
+	ui_reg("book.more", "0");
+	ui_reg("book.loading", "1");
+
+	// 只换分类栏的条目样式，ScrollView 本身不重建，横向滚动位置保留
+	ct_reselect(bookCatNames(), idx, new Runnable() {
+		public void run() {
+			book_switch();
+		}
+	});
+
+	LinearLayout grid = (LinearLayout) ui_get("book.grid");
+	LinearLayout slot = (LinearLayout) ui_get("book.slot");
+	ScrollView sv = (ScrollView) ui_get("book.sv");
+	if (sv != null) {
+		sv.scrollTo(0, 0);
+	}
+	sh_skeleton(grid);
+	sh_moreSet(slot, 1, null);
+	book_load(idx, 1);
+}
+
+public void book_reload() {
+	book_wire();
+	int cat = book_flag("book.cat");
+	FrameLayout host = (FrameLayout) ui_get("home.content");
+	if (host == null) {
+		return;
+	}
+	host.removeAllViews();
+	host.addView(book_page(cat), new FrameLayout.LayoutParams(-1, -1));
+}
+
+public void book_more() {
+	book_wire();
+	if (book_flag("book.loading") == 1) {
+		return;
+	}
+	if (book_flag("book.more") == 0) {
+		return;
+	}
+	LinearLayout slot = (LinearLayout) ui_get("book.slot");
+	sh_moreSet(slot, 1, null);
+	book_load(book_flag("book.cat"), book_flag("book.pg") + 1);
+}
+
+// 列表只读本地书刊库，不再按页请求服务器；库没建好就先建库并显示进度
+public void book_load(int catIdx, int page) {
+	book_wire();
+	i.fn("indexer");
+	ui_reg("book.loading", "1");
+	String spec = "b:" + bookCatIds()[catIdx];
+	int want = page;
+	ui_log("book load cat=" + catIdx + " page=" + page);
+
+	if (!ix_ready()) {
+		// 库还没建好：进度页会盖在上面，这里什么都不做，回来后由首页 resume 重载
+		return;
+	}
+
+	new Thread(new Runnable() {
+		public void run() {
+			try {
+				i.fn("indexer");
+				JSONArray slice = ix_libPage(spec, want, 30);
+				JSONArray all = ix_libAll(spec);
+				int total = all == null ? 0 : all.length();
+				JSONArray got = slice;
+				int pg = want;
+				int mv = (want * 30 < total) ? 1 : 0;
+				activity.runOnUiThread(new Runnable() {
+					public void run() {
+						book_render(pg, got, mv);
+					}
+				});
+			} catch (Throwable t) {
+				i.syso("BOOK ! " + t);
+				activity.runOnUiThread(new Runnable() {
+					public void run() {
+						book_render(want, null, 0);
+					}
+				});
+			}
+		}
+	}).start();
+}
+
+// 首次进入（或索引被判定过期）：建库期间显示进度，建完自动接着加载
+
+public void book_render(int page, JSONArray arr, int more) {
+	book_wire();
+	ui_reg("book.loading", "0");
+	LinearLayout grid = (LinearLayout) ui_get("book.grid");
+	LinearLayout slot = (LinearLayout) ui_get("book.slot");
+
+	if (arr == null) {
+		if (page == 1) {
+			if (grid != null) {
+				grid.removeAllViews();
+				grid.addView(wg_message("加载失败", "检查网络后重试", "重试", new Runnable() {
+					public void run() {
+						book_reload();
+					}
+				}), new LinearLayout.LayoutParams(-1, ui_dp(260)));
+			}
+			sh_moreSet(slot, 2, null);
+		} else {
+			sh_moreSet(slot, 3, new Runnable() {
+				public void run() {
+					book_more();
+				}
+			});
+		}
+		return;
+	}
+
+	int n = arr.length();
+	if (page == 1) {
+		if (grid != null) {
+			grid.removeAllViews();
+		}
+		if (n == 0) {
+			if (grid != null) {
+				grid.addView(wg_message("这个分类暂时没有内容", "换个分类看看", "", null),
+						new LinearLayout.LayoutParams(-1, ui_dp(260)));
+			}
+			sh_moreSet(slot, 2, null);
+			return;
+		}
+	}
+
+	Runnable open = new Runnable() {
+		public void run() {
+			book_open();
+		}
+	};
+	if (grid != null) {
+		sh_append(grid, arr, false, open);
+	}
+
+	ui_reg("book.pg", String.valueOf(page));
+	int hasMore = more;
+	ui_reg("book.more", String.valueOf(hasMore));
+
+	if (hasMore == 1) {
+		sh_moreSet(slot, 0, new Runnable() {
+			public void run() {
+				book_more();
+			}
+		});
+	} else {
+		sh_moreSet(slot, 2, null);
+	}
+}
+
+public void book_open() {
+	try {
+		Object o = i.sss("sh.pick");
+		if (o == null) {
+			return;
+		}
+		i.sss("detail.book", String.valueOf(o));
+		i.uigo("bookdetail.iyu");
+	} catch (Throwable t) {
+		ui_log("book_open " + t);
+	}
+}

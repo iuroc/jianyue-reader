@@ -1,0 +1,136 @@
+// 线稿图标：Canvas 现画，统一 24dp 盒 / 1.5dp 线宽 / 圆头端点。
+// 不用图片资源——图片没有一条路径同时覆盖开发模式与打包产物。
+
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
+import android.graphics.drawable.BitmapDrawable;
+import android.widget.ImageView;
+
+// 生成一个 sizeDp 见方的图标视图；颜色取十六进制
+public ImageView ic_make(String name, int sizeDp, String colorHex) {
+	float px = (float) ui_dp(sizeDp);
+	Bitmap bm = Bitmap.createBitmap((int) px, (int) px, Bitmap.Config.ARGB_8888);
+	Canvas c = new Canvas(bm);
+	Paint p = new Paint();
+	p.setAntiAlias(true);
+	p.setColor(ui_color(colorHex));
+	p.setStyle(Paint.Style.STROKE);
+	p.setStrokeWidth(ui_dpf(1.5f) * ((float) sizeDp / 24f));
+	p.setStrokeCap(Paint.Cap.ROUND);
+	p.setStrokeJoin(Paint.Join.ROUND);
+	ic_draw(c, p, name, px / 24f);
+	ImageView iv = new ImageView(activity);
+	iv.setImageDrawable(new BitmapDrawable(activity.getResources(), bm));
+	iv.setScaleType(ImageView.ScaleType.CENTER);
+	return iv;
+}
+
+public void ic_draw(Canvas c, Paint p, String name, float s) {
+	if ("back".equals(name)) {
+		ic_back(c, p, s);
+	} else if ("close".equals(name)) {
+		ic_close(c, p, s);
+	} else if ("toc".equals(name)) {
+		ic_toc(c, p, s);
+	} else if ("retry".equals(name)) {
+		ic_retry(c, p, s);
+	} else if ("home".equals(name)) {
+		ic_home(c, p, s);
+	} else if ("book".equals(name)) {
+		ic_book(c, p, s);
+	} else if ("mag".equals(name)) {
+		ic_mag(c, p, s);
+	} else if ("person".equals(name)) {
+		ic_person(c, p, s);
+	} else if ("chev".equals(name)) {
+		ic_chev(c, p, s);
+	} else if ("search".equals(name)) {
+		ic_search(c, p, s);
+	} else {
+		ic_toc(c, p, s);
+	}
+}
+
+public void ic_back(Canvas c, Paint p, float s) {
+	Path path = new Path();
+	path.moveTo(15f * s, 5f * s);
+	path.lineTo(8f * s, 12f * s);
+	path.lineTo(15f * s, 19f * s);
+	c.drawPath(path, p);
+}
+
+public void ic_close(Canvas c, Paint p, float s) {
+	c.drawLine(6f * s, 6f * s, 18f * s, 18f * s, p);
+	c.drawLine(18f * s, 6f * s, 6f * s, 18f * s, p);
+}
+
+public void ic_toc(Canvas c, Paint p, float s) {
+	c.drawLine(5f * s, 7f * s, 19f * s, 7f * s, p);
+	c.drawLine(5f * s, 12f * s, 14f * s, 12f * s, p);
+	c.drawLine(5f * s, 17f * s, 19f * s, 17f * s, p);
+}
+
+public void ic_retry(Canvas c, Paint p, float s) {
+	float cx = 12f * s;
+	float cy = 12f * s;
+	float r = 7f * s;
+	RectF rect = new RectF(cx - r, cy - r, cx + r, cy + r);
+	c.drawArc(rect, 205f, 300f, false, p);
+	double a = Math.toRadians(205.0);
+	float ax = cx + (float) (r * Math.cos(a));
+	float ay = cy + (float) (r * Math.sin(a));
+	Path head = new Path();
+	head.moveTo(ax - 3.2f * s, ay - 0.6f * s);
+	head.lineTo(ax, ay);
+	head.lineTo(ax - 0.2f * s, ay + 3.4f * s);
+	c.drawPath(head, p);
+}
+
+public void ic_home(Canvas c, Paint p, float s) {
+	Path roof = new Path();
+	roof.moveTo(4f * s, 11f * s);
+	roof.lineTo(12f * s, 4f * s);
+	roof.lineTo(20f * s, 11f * s);
+	c.drawPath(roof, p);
+	Path body = new Path();
+	body.moveTo(6.5f * s, 10.5f * s);
+	body.lineTo(6.5f * s, 19f * s);
+	body.lineTo(17.5f * s, 19f * s);
+	body.lineTo(17.5f * s, 10.5f * s);
+	c.drawPath(body, p);
+}
+
+public void ic_book(Canvas c, Paint p, float s) {
+	RectF rect = new RectF(5f * s, 4f * s, 19f * s, 20f * s);
+	c.drawRoundRect(rect, 1.6f * s, 1.6f * s, p);
+	c.drawLine(9f * s, 4f * s, 9f * s, 20f * s, p);
+}
+
+public void ic_mag(Canvas c, Paint p, float s) {
+	RectF rect = new RectF(5f * s, 4f * s, 19f * s, 20f * s);
+	c.drawRoundRect(rect, 1.6f * s, 1.6f * s, p);
+	c.drawLine(8f * s, 9f * s, 16f * s, 9f * s, p);
+	c.drawLine(8f * s, 13f * s, 16f * s, 13f * s, p);
+}
+
+public void ic_search(Canvas c, Paint p, float s) {
+	c.drawCircle(10.5f * s, 10.5f * s, 5.5f * s, p);
+	c.drawLine(14.6f * s, 14.6f * s, 19f * s, 19f * s, p);
+}
+
+public void ic_chev(Canvas c, Paint p, float s) {
+	Path path = new Path();
+	path.moveTo(9f * s, 6f * s);
+	path.lineTo(15f * s, 12f * s);
+	path.lineTo(9f * s, 18f * s);
+	c.drawPath(path, p);
+}
+
+public void ic_person(Canvas c, Paint p, float s) {
+	c.drawCircle(12f * s, 8.5f * s, 3.2f * s, p);
+	RectF rect = new RectF(5.5f * s, 13f * s, 18.5f * s, 25f * s);
+	c.drawArc(rect, 180f, 180f, false, p);
+}

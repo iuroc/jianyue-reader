@@ -1,0 +1,200 @@
+// 通用组件：页头、图标按钮、骨架、扫动线、空态/错误态、发丝线、按压涟漪。
+// 依赖 ui / theme / icon 三个模块，页面入口需依次 i.fn 加载。
+
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+// ---------- 按压反馈 ----------
+// 第三个参数必须给形状遮罩：传 null 时涟漪会以触点为圆心扩散成整圆并溢出控件边界。
+// 注意 content 传的是 null：调用它会**覆盖掉调用方已经设好的背景**（变透明）。
+// 需要保留自身背景的控件，先给控件挂一个透明覆盖层、把涟漪设在覆盖层上。
+
+public void wg_ripple(View v, int radiusDp, boolean oval) {
+	try {
+		GradientDrawable mask = new GradientDrawable();
+		mask.setShape(oval ? GradientDrawable.OVAL : GradientDrawable.RECTANGLE);
+		if (!oval && radiusDp > 0) {
+			mask.setCornerRadius(ui_dp(radiusDp));
+		}
+		mask.setColor(Color.WHITE);
+		RippleDrawable rd = new RippleDrawable(ColorStateList.valueOf(ui_color(th_ripple())), null, mask);
+		v.setBackground(rd);
+	} catch (Throwable t) {
+		ui_log("wg_ripple " + t);
+	}
+}
+
+public void wg_rippleFill(View v, int radiusDp, String fillHex, boolean oval) {
+	try {
+		GradientDrawable content = new GradientDrawable();
+		content.setShape(oval ? GradientDrawable.OVAL : GradientDrawable.RECTANGLE);
+		if (!oval && radiusDp > 0) {
+			content.setCornerRadius(ui_dp(radiusDp));
+		}
+		content.setColor(ui_color(fillHex));
+		GradientDrawable mask = new GradientDrawable();
+		mask.setShape(oval ? GradientDrawable.OVAL : GradientDrawable.RECTANGLE);
+		if (!oval && radiusDp > 0) {
+			mask.setCornerRadius(ui_dp(radiusDp));
+		}
+		mask.setColor(Color.WHITE);
+		RippleDrawable rd = new RippleDrawable(ColorStateList.valueOf(ui_color(th_ripple())), content, mask);
+		v.setBackground(rd);
+	} catch (Throwable t) {
+		ui_log("wg_rippleFill " + t);
+	}
+}
+
+// ---------- 图标按钮 ----------
+
+public ImageView wg_iconButton(String name, int sizeDp, String colorHex, int touchDp, Runnable run) {
+	ImageView iv = ic_make(name, sizeDp, colorHex);
+	iv.setLayoutParams(new LinearLayout.LayoutParams(ui_dp(touchDp), ui_dp(touchDp)));
+	wg_ripple(iv, touchDp / 2, true);
+	if (run != null) {
+		Runnable r = run;
+		iv.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				r.run();
+			}
+		});
+	}
+	return iv;
+}
+
+// ---------- 页头：全 App 唯一实现 ----------
+
+public LinearLayout wg_header(String title, String actionName, Runnable backRun, Runnable actionRun) {
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+	// 没有返回回调就不画返回键：一级页面不该出现点了没反应的箭头
+	boolean hasBack = backRun != null;
+	row.setPadding(ui_dp(hasBack ? 8 : 20), 0, ui_dp(8), 0);
+	row.setLayoutParams(new LinearLayout.LayoutParams(-1, ui_dp(56)));
+
+	if (hasBack) {
+		ImageView back = ic_make("back", 24, th_ink1());
+		back.setLayoutParams(new LinearLayout.LayoutParams(ui_dp(48), ui_dp(48)));
+		wg_ripple(back, 24, true);
+		Runnable br = backRun;
+		back.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				br.run();
+			}
+		});
+		row.addView(back);
+	}
+
+	TextView t = ui_text(title, 17, th_ink1());
+	t.setGravity(Gravity.CENTER_VERTICAL);
+	t.setSingleLine(true);
+	t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, -1, 1f);
+	tlp.leftMargin = ui_dp(hasBack ? 4 : 0);
+	t.setLayoutParams(tlp);
+	row.addView(t);
+
+	if (actionName != null && actionName.length() > 0) {
+		ImageView act = ic_make(actionName, 24, th_ink1());
+		act.setLayoutParams(new LinearLayout.LayoutParams(ui_dp(48), ui_dp(48)));
+		wg_ripple(act, 24, true);
+		if (actionRun != null) {
+			Runnable ar = actionRun;
+			act.setOnClickListener(new View.OnClickListener() {
+				public void onClick(View v) {
+					ar.run();
+				}
+			});
+		}
+		row.addView(act);
+	}
+	return row;
+}
+
+// ---------- 骨架 / 发丝线 ----------
+
+public View wg_skeleton(int radiusDp) {
+	View v = new View(activity);
+	GradientDrawable d = new GradientDrawable();
+	d.setColor(ui_color(th_placeholder()));
+	d.setCornerRadius(ui_dp(radiusDp));
+	v.setBackground(d);
+	return v;
+}
+
+// 两端对齐：中文长段落用，最后一行不会被拉伸（API 26+）
+public void wg_justify(TextView t) {
+	try {
+		// 传字面量 1：BeanShell 解析不到 TextView.JUSTIFICATION_MODE_INTER_WORD
+		// （报 No static field or inner class），而 1 就是 INTER_WORD
+		t.setJustificationMode(1);
+	} catch (Throwable e) {
+		ui_log("wg_justify " + e);
+	}
+}
+
+// 封面占位：骨架屏质感（自上而下 surface → placeholder 的极轻渐变），不放文字
+public void wg_coverBg(View v, int radiusDp) {
+	GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+			new int[] {ui_color(th_surface()), ui_color(th_placeholder())});
+	if (radiusDp > 0) {
+		d.setCornerRadius(ui_dp(radiusDp));
+	}
+	v.setBackground(d);
+}
+
+public View wg_hairline() {
+	View v = new View(activity);
+	v.setBackgroundColor(ui_color(th_hairline()));
+	return v;
+}
+
+// ---------- 空态 / 错误态（原地呈现，不弹窗、不 toast） ----------
+
+public LinearLayout wg_message(String title, String sub, String actionText, Runnable actionRun) {
+	LinearLayout col = ui_col();
+	col.setGravity(Gravity.CENTER);
+
+	TextView t = ui_text(title, 17, th_ink1());
+	t.setGravity(Gravity.CENTER);
+	col.addView(t, new LinearLayout.LayoutParams(-1, -2));
+
+	if (sub != null && sub.length() > 0) {
+		TextView s = ui_text(sub, 13, th_ink2());
+		s.setGravity(Gravity.CENTER);
+		LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+		lp.topMargin = ui_dp(8);
+		lp.leftMargin = ui_dp(32);
+		lp.rightMargin = ui_dp(32);
+		s.setLayoutParams(lp);
+		col.addView(s);
+	}
+
+	if (actionText != null && actionText.length() > 0) {
+		TextView a = ui_text(actionText, 15, th_accent());
+		a.setGravity(Gravity.CENTER);
+		a.setPadding(ui_dp(16), ui_dp(12), ui_dp(16), ui_dp(12));
+		LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(-2, -2);
+		lp2.topMargin = ui_dp(16);
+		a.setLayoutParams(lp2);
+		wg_ripple(a, 20, false);
+		if (actionRun != null) {
+			Runnable ar = actionRun;
+			a.setOnClickListener(new View.OnClickListener() {
+				public void onClick(View v) {
+					ar.run();
+				}
+			});
+		}
+		col.addView(a);
+	}
+	return col;
+}

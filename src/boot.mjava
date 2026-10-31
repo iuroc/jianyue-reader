@@ -1,0 +1,175 @@
+// 书刊库进度页：全局唯一入口。
+// 首次启动、以及「我的 → 重建索引」都会进到这里；建完才放行，期间吞掉返回键。
+// 建库产物先写 tmp，全部成功才提交替换正式库——失败时旧库继续可用。
+
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import com.google.android.material.progressindicator.LinearProgressIndicator;
+
+public void first() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("widgets");
+	i.fn("indexer");
+	ui_init(ui_root());
+	build();
+}
+
+public void second() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void again() {
+	i.fn("ui");
+	ui_insets();
+}
+
+// 吞掉返回键：建库期间不允许退出本页（系统层仍然可以回桌面/杀进程）
+public void key(Object kc) {
+}
+
+public void build() {
+	View bg = ui_layer("bg");
+	if (bg != null) {
+		bg.setBackgroundColor(ui_color(th_bg()));
+	}
+	View safe = ui_layer("safe");
+	if (safe == null) {
+		return;
+	}
+
+	LinearLayout page = ui_col();
+	page.setGravity(Gravity.CENTER);
+	ui_add((ViewGroup) safe, page, -1, -1);
+
+	TextView brand = ui_text("简阅", 15, th_ink2());
+	brand.setLetterSpacing(0.3f);
+	brand.setGravity(Gravity.CENTER);
+	page.addView(brand, new LinearLayout.LayoutParams(-2, -2));
+
+	TextView title = ui_text("正在建立本地书刊库", 20, th_ink1());
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
+	tlp.topMargin = ui_dp(32);
+	title.setLayoutParams(tlp);
+	page.addView(title);
+
+	LinearProgressIndicator lp = new LinearProgressIndicator(activity);
+	lp.setIndeterminate(false);
+	lp.setMax(boot_total());
+	lp.setProgress(0);
+	lp.setIndicatorColor(new int[] {ui_color(th_accent())});
+	lp.setTrackColor(ui_color(th_hairline()));
+	// M3 默认在轨道末端画一个「停止点」，线性进度里看起来像滑块，这里关掉
+	lp.setTrackStopIndicatorSize(0);
+	lp.setTrackCornerRadius(ui_dp(1));
+	LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(ui_dp(200), ui_dp(3));
+	plp.topMargin = ui_dp(28);
+	page.addView(lp, plp);
+	ui_reg("boot.lp", lp);
+
+	TextView count = ui_text("0 / " + boot_total(), 13, th_ink2());
+	LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-2, -2);
+	clp.topMargin = ui_dp(10);
+	count.setLayoutParams(clp);
+	page.addView(count);
+	ui_reg("boot.count", count);
+
+	TextView hint = ui_text("首次使用需要抓取全部书刊目录，请保持网络连接", 13, th_ink2());
+	hint.setGravity(Gravity.CENTER);
+	LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(ui_dp(260), -2);
+	hlp.topMargin = ui_dp(32);
+	hint.setLayoutParams(hlp);
+	page.addView(hint);
+
+	TextView retry = ui_text("重试", 15, th_accent());
+	retry.setGravity(Gravity.CENTER);
+	retry.setPadding(ui_dp(24), ui_dp(12), ui_dp(24), ui_dp(12));
+	retry.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			boot_retry();
+		}
+	});
+	LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-2, -2);
+	rlp.topMargin = ui_dp(16);
+	retry.setLayoutParams(rlp);
+	retry.setVisibility(View.GONE);
+	page.addView(retry);
+	ui_reg("boot.retry", retry);
+
+	boot_start();
+}
+
+public int boot_total() {
+	return 18;
+}
+
+public void boot_start() {
+	i.fn("indexer");
+	// 手动重建：先清暂存区，正式库留到最后一步才换
+	if (ix_flag("boot.rebuild")) {
+		i.sss("boot.rebuild", "0");
+		ix_resetTmp();
+	}
+	boot_hint(false);
+	ix_start(true);
+	boot_tick();
+}
+
+public void boot_retry() {
+	i.fn("indexer");
+	ix_resetTmp();
+	boot_hint(false);
+	ix_start(true);
+	boot_tick();
+}
+
+public void boot_hint(boolean show) {
+	TextView r = (TextView) ui_get("boot.retry");
+	if (r != null) {
+		r.setVisibility(show ? View.VISIBLE : View.GONE);
+	}
+}
+
+public void boot_tick() {
+	i.fn("indexer");
+	i.fn("ui");
+	int done = ix_doneCount();
+	int total = boot_total();
+
+	TextView count = (TextView) ui_get("boot.count");
+	if (count != null) {
+		count.setText(done + " / " + total);
+	}
+	LinearProgressIndicator lp = (LinearProgressIndicator) ui_get("boot.lp");
+	if (lp != null) {
+		lp.setProgress(done);
+	}
+
+	// 注意：手动重建时旧库一直在，不能用 ix_ready() 判断「做完了」，要看任务是否还在跑
+	if (ix_running() != 1) {
+		if (ix_failed()) {
+			boot_hint(true);
+			TextView c = (TextView) ui_get("boot.count");
+			if (c != null) {
+				c.setText("建立失败，旧书刊库仍可继续使用");
+			}
+			return;
+		}
+		activity.finish();
+		return;
+	}
+
+	View root = ui_root();
+	if (root != null) {
+		root.postDelayed(new Runnable() {
+			public void run() {
+				boot_tick();
+			}
+		}, 600);
+	}
+}

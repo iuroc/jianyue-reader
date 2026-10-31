@@ -1,0 +1,387 @@
+// 首页 Tab：继续阅读 + 精选。内容少而静，不抢阅读的注意力。
+
+import android.content.res.ColorStateList;
+import android.text.TextUtils;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import com.google.android.material.card.MaterialCardView;
+
+import java.util.ArrayList;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public void lib_wire() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("shelf");
+	i.fn("indexer");
+	i.fn("store");
+}
+
+public View lib_page() {
+	lib_wire();
+	LinearLayout page = ui_col();
+	page.addView(wg_header("首页", "search", null, new Runnable() {
+		public void run() {
+			i.uigo("search.iyu");
+		}
+	}));
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	ui_addWeight(page, sv, -1, 0, 1f);
+
+	LinearLayout body = ui_col();
+	body.setPadding(ui_dp(16), ui_dp(16), ui_dp(16), ui_dp(24));
+	// 左右各 16dp padding，第一/最后一列的格子涟漪要扩进这块 padding，
+	// 所以 clipToPadding 必须关掉，否则左右两侧被裁
+	body.setClipChildren(false);
+	body.setClipToPadding(false);
+	sv.setClipChildren(false);
+	sv.setClipToPadding(false);
+	sv.addView(body, new FrameLayout.LayoutParams(-1, -2));
+
+	JSONObject prog = lib_latestProgress();
+	if (prog != null) {
+		body.addView(lib_continueCard(prog));
+	}
+
+	body.addView(lib_section("图书推荐", "b"));
+	body.addView(lib_section("期刊推荐", "m"));
+
+	ui_log("lib build ok");
+	return page;
+}
+
+// ---------- 推荐：从本地书刊库随机取，每块独立「换一批」 ----------
+
+public View lib_section(String title, String kind) {
+	LinearLayout box = ui_col();
+	// 格子的涟漪要扩到格子外面，这一路的容器都不能裁剪
+	box.setClipChildren(false);
+	box.setClipToPadding(false);
+
+	LinearLayout head = ui_row();
+	head.setGravity(Gravity.CENTER_VERTICAL);
+	TextView t = ui_text(title, 17, th_ink1());
+	head.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
+
+	TextView more = ui_text("换一批", 13, th_ink2());
+	// 左右对称内边距，否则涟漪的胶囊会比文字偏一边
+	more.setPadding(ui_dp(12), ui_dp(6), ui_dp(12), ui_dp(6));
+	head.addView(more);
+	wg_ripple(more, 16, false);
+
+	LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-1, -2);
+	hlp.topMargin = ui_dp(24);
+	hlp.bottomMargin = ui_dp(4);
+	head.setLayoutParams(hlp);
+	box.addView(head);
+
+	// 两行一起横向滚动：外层 HorizontalScrollView 包一个竖向容器，两行作为一个整体滑动
+	HorizontalScrollView hs = new HorizontalScrollView(activity);
+	hs.setHorizontalScrollBarEnabled(false);
+	hs.setClipChildren(false);
+	hs.setClipToPadding(false);
+	LinearLayout board = ui_col();
+	board.setClipChildren(false);
+	board.setClipToPadding(false);
+	hs.addView(board, new FrameLayout.LayoutParams(-2, -2));
+	LinearLayout.LayoutParams hslp = new LinearLayout.LayoutParams(-1, -2);
+	hslp.topMargin = ui_dp(8);
+	box.addView(hs, hslp);
+
+	lib_fillBoard(board, kind);
+
+	String k = kind;
+	more.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			lib_fillBoard(board, k);
+		}
+	});
+	return box;
+}
+
+// 每次 12 本，排成 2 行 × 6 列，整体横向滚动
+public void lib_fillBoard(LinearLayout board, String kind) {
+	lib_wire();
+	if (board == null) {
+		return;
+	}
+	board.removeAllViews();
+	boolean isMag = "m".equals(kind);
+	JSONArray picks = lib_randomOf(kind, 12);
+	int perRow = 6;
+	int idx = 0;
+	for (int r = 0; r < 2; r++) {
+		// 行距与书架网格一致（书架里行与行本来就是紧挨的，节奏来自格子内部）
+		LinearLayout row = sh_row();
+		LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-2, -2);
+		board.addView(row, rlp);
+		for (int c = 0; c < perRow && idx < picks.length(); c++, idx++) {
+			JSONObject e = picks.optJSONObject(idx);
+			if (e == null) {
+				continue;
+			}
+			JSONObject shape = new JSONObject();
+			if (isMag) {
+				shape.put("name", e.optString("t", ""));
+				shape.put("ISSN", e.optString("a", ""));
+				shape.put("coverPath", e.optString("c", ""));
+			} else {
+				shape.put("title", e.optString("t", ""));
+				shape.put("author", e.optString("a", ""));
+				shape.put("cover", e.optString("c", ""));
+			}
+			JSONObject ent = e;
+			Runnable open = new Runnable() {
+				public void run() {
+					lib_openEntry(ent);
+				}
+			};
+			if (c > 0) {
+				row.addView(sh_gap());
+			}
+			row.addView(sh_cell(shape, isMag, open));
+		}
+	}
+}
+
+// 从瘦索引里按类型随机取 n 条（去重）
+public JSONArray lib_randomOf(String kind, int n) {
+	JSONArray out = new JSONArray();
+	try {
+		i.fn("indexer");
+		JSONArray all = ix_all();
+		if (all == null) {
+			return out;
+		}
+		JSONArray pool = new JSONArray();
+		for (int i = 0; i < all.length(); i++) {
+			JSONObject o = all.optJSONObject(i);
+			if (o != null && kind.equals(o.optString("k", ""))) {
+				pool.put(o);
+			}
+		}
+		int total = pool.length();
+		if (total == 0) {
+			return out;
+		}
+		ArrayList used = new ArrayList();
+		int guard = 0;
+		while (out.length() < n && guard < n * 12) {
+			guard++;
+			int idx = (int) (Math.random() * total);
+			if (used.contains(String.valueOf(idx))) {
+				continue;
+			}
+			used.add(String.valueOf(idx));
+			out.put(pool.opt(idx));
+		}
+	} catch (Throwable t) {
+		ui_log("lib random " + t);
+	}
+	return out;
+}
+
+// 点推荐卡片：按所属分类从本地库取整条记录，与搜索结果同一套跳转
+public void lib_openEntry(JSONObject e) {
+	try {
+		i.fn("indexer");
+		boolean isMag = "m".equals(e.optString("k", ""));
+		String sp = e.optString("sp", "");
+		String surl = e.optString("s", "");
+		int id = e.optInt("id", 0);
+		JSONObject full = ix_libFind(sp, isMag ? "" : surl, isMag ? id : 0);
+		if (full == null) {
+			return;
+		}
+		i.sss(isMag ? "detail.mag" : "detail.book", full.toString());
+		i.uigo(isMag ? "magdetail.iyu" : "bookdetail.iyu");
+	} catch (Throwable t) {
+		ui_log("lib openEntry " + t);
+	}
+}
+
+// ---------- 继续阅读 ----------
+
+// 旧记录没有书名时，用已建好的索引按 surl 回填，并重新写回
+// 用本地书刊库补齐进度里缺的元信息。
+// 不能只在「没有书名」时补：从阅读历史进入阅读器的记录可能只有书名没有作者，
+// 那种记录以前会被整条跳过，卡片上就再也看不到作者了。
+public JSONObject lib_fillMeta(JSONObject p) {
+	if (p == null) {
+		return p;
+	}
+	boolean needTitle = p.optString("title", "").length() == 0;
+	boolean needAuthor = p.optString("author", "").length() == 0;
+	if (!needTitle && !needAuthor) {
+		return p;
+	}
+	try {
+		i.fn("indexer");
+		if (!ix_ready()) {
+			return p;
+		}
+		String surl = p.optString("surl", "");
+		JSONArray all = ix_all();
+		if (all == null) {
+			return p;
+		}
+		for (int k = 0; k < all.length(); k++) {
+			JSONObject o = all.optJSONObject(k);
+			if (o == null) {
+				continue;
+			}
+			if (surl.equals(o.optString("s", ""))) {
+				String t = o.optString("t", "");
+				String a = o.optString("a", "");
+				if (needTitle && t.length() > 0) {
+					p.put("title", t);
+				}
+				if (needAuthor && a.length() > 0) {
+					p.put("author", a);
+				}
+				i.fn("store");
+				st_progressSave(surl, p.optInt("page", 1), p.optInt("pageAll", 1),
+						p.optString("title", t), p.optString("author", a));
+				break;
+			}
+		}
+	} catch (Throwable t) {
+	}
+	return p;
+}
+
+public JSONObject lib_latestProgress() {
+	try {
+		i.fn("store");
+		JSONArray arr = st_progressAllList();
+		JSONObject best = null;
+		long ts = 0;
+		for (int k = 0; k < arr.length(); k++) {
+			JSONObject o = arr.optJSONObject(k);
+			if (o == null) {
+				continue;
+			}
+			long u = o.optLong("updatedAt", 0);
+			if (u >= ts) {
+				ts = u;
+				best = o;
+			}
+		}
+		return best;
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public View lib_continueCard(JSONObject p) {
+	p = lib_fillMeta(p);
+	String title = p.optString("title", "");
+	if (title.length() == 0) {
+		title = "继续上次阅读";
+	}
+	String author = p.optString("author", "");
+	int page = p.optInt("page", 1);
+	int all = p.optInt("pageAll", 1);
+
+	// 卡片交给 MaterialCardView：圆角、描边、按形状裁剪的涟漪都由库负责
+	MaterialCardView card = new MaterialCardView(activity);
+	card.setCardBackgroundColor(ui_color(th_card()));
+	card.setRadius(ui_dp(16));
+	card.setCardElevation(0f);
+	card.setStrokeWidth(ui_dp(1));
+	card.setStrokeColor(ColorStateList.valueOf(ui_color(th_hairline())));
+	card.setContentPadding(ui_dp(16), ui_dp(16), ui_dp(16), ui_dp(16));
+	card.setClickable(true);
+	card.setRippleColor(ColorStateList.valueOf(ui_color(th_ripple())));
+
+	LinearLayout inner = ui_col();
+	card.addView(inner, new FrameLayout.LayoutParams(-1, -2));
+
+	TextView cap = ui_text("继续阅读", 13, th_ink2());
+	inner.addView(cap);
+
+	TextView t = ui_text(title, 17, th_ink1());
+	t.setSingleLine(true);
+	t.setEllipsize(TextUtils.TruncateAt.END);
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
+	tlp.topMargin = ui_dp(6);
+	t.setLayoutParams(tlp);
+	inner.addView(t);
+
+	if (author.length() > 0) {
+		TextView au = ui_text(author, 13, th_ink2());
+		au.setSingleLine(true);
+		au.setEllipsize(TextUtils.TruncateAt.END);
+		LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-1, -2);
+		alp.topMargin = ui_dp(4);
+		au.setLayoutParams(alp);
+		inner.addView(au);
+	}
+
+	TextView meta = ui_text(String.valueOf(page) + " / " + all, 13, th_ink2());
+	LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1, -2);
+	mlp.topMargin = ui_dp(8);
+	meta.setLayoutParams(mlp);
+	inner.addView(meta);
+
+	// 进度条
+	// 用权重分段，不拿屏幕宽算像素：卡片有内边距，按屏幕宽算会顶出去
+	LinearLayout track = ui_row();
+	LinearLayout.LayoutParams trlp = new LinearLayout.LayoutParams(-1, ui_dp(2));
+	trlp.topMargin = ui_dp(10);
+	track.setLayoutParams(trlp);
+	track.setBackgroundColor(ui_color(th_hairline()));
+
+	View done = new View(activity);
+	done.setBackgroundColor(ui_color(th_accent()));
+	float wDone = (float) Math.max(1, Math.min(page, all));
+	float wRest = (float) Math.max(0, all - page);
+	track.addView(done, new LinearLayout.LayoutParams(0, ui_dp(2), wDone));
+	View rest = new View(activity);
+	track.addView(rest, new LinearLayout.LayoutParams(0, ui_dp(2), wRest));
+	inner.addView(track);
+
+	JSONObject picked = p;
+	card.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			lib_open(picked);
+		}
+	});
+
+	LinearLayout wrap = ui_col();
+	wrap.addView(card, new LinearLayout.LayoutParams(-1, -2));
+	LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(-1, -2);
+	wrap.setLayoutParams(wlp);
+	return wrap;
+}
+
+public void lib_open(JSONObject p) {
+	try {
+		String surl = p.optString("surl", "");
+		if (surl.length() == 0) {
+			return;
+		}
+		i.sss("reader.surl", surl);
+		i.sss("reader.title", p.optString("title", ""));
+		i.sss("reader.author", p.optString("author", ""));
+		i.uigo("reader.iyu");
+	} catch (Throwable t) {
+		ui_log("lib_open " + t);
+	}
+}
+

@@ -1,0 +1,6 @@
+bin/
+*.apk
+!apk/assets/*-res.apk
+*.idsig
+*.flock
+apk/assets/oat/

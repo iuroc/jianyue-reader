@@ -1,0 +1,301 @@
+// 本地持久化：阅读进度、外观设置、主题、索引状态。
+// 落在 filesDir/jianyue/ 下，一个键一个文本文件，键名做文件名安全化。
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+// ---------- 目录 ----------
+
+public File st_root() {
+	File d = new File(activity.getFilesDir(), "jianyue");
+	if (!d.exists()) {
+		d.mkdirs();
+	}
+	return d;
+}
+
+public File st_kvDir() {
+	File d = new File(st_root(), "kv");
+	if (!d.exists()) {
+		d.mkdirs();
+	}
+	return d;
+}
+
+public File st_idxDir() {
+	File d = new File(st_root(), "index");
+	if (!d.exists()) {
+		d.mkdirs();
+	}
+	return d;
+}
+
+// 键 -> 安全文件名：非字母数字一律换成下划线
+public String st_norm(String key) {
+	StringBuilder sb = new StringBuilder();
+	for (int k = 0; k < key.length(); k++) {
+		char ch = key.charAt(k);
+		if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+			sb.append(ch);
+		} else {
+			sb.append('_');
+		}
+	}
+	return sb.toString();
+}
+
+// ---------- 键值 ----------
+
+public void st_put(String key, String val) {
+	try {
+		File f = new File(st_kvDir(), st_norm(key));
+		FileOutputStream o = new FileOutputStream(f);
+		o.write(val.getBytes("UTF-8"));
+		o.flush();
+		o.close();
+	} catch (Throwable t) {
+		i.syso("STORE put ! " + t);
+	}
+}
+
+public String st_get(String key) {
+	try {
+		File f = new File(st_kvDir(), st_norm(key));
+		if (!f.exists()) {
+			return null;
+		}
+		FileInputStream in = new FileInputStream(f);
+		BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+		StringBuilder sb = new StringBuilder();
+		String line = r.readLine();
+		while (line != null) {
+			sb.append(line);
+			line = r.readLine();
+		}
+		r.close();
+		return sb.toString();
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public void st_remove(String key) {
+	try {
+		File f = new File(st_kvDir(), st_norm(key));
+		if (f.exists()) {
+			f.delete();
+		}
+	} catch (Throwable t) {
+	}
+}
+
+public String[] st_list(String prefix) {
+	try {
+		File dir = st_kvDir();
+		File[] fs = dir.listFiles();
+		if (fs == null) {
+			return new String[0];
+		}
+		String p = st_norm(prefix);
+		int n = 0;
+		for (int k = 0; k < fs.length; k++) {
+			if (fs[k].getName().startsWith(p)) {
+				n++;
+			}
+		}
+		String[] out = new String[n];
+		int j = 0;
+		for (int k = 0; k < fs.length; k++) {
+			if (fs[k].getName().startsWith(p)) {
+				out[j] = fs[k].getName();
+				j++;
+			}
+		}
+		return out;
+	} catch (Throwable t) {
+		return new String[0];
+	}
+}
+
+// ---------- 整数便捷读写 ----------
+
+public int st_getInt(String key, int def) {
+	String s = st_get(key);
+	if (s == null || s.length() == 0) {
+		return def;
+	}
+	try {
+		return Integer.parseInt(s.trim());
+	} catch (Throwable t) {
+		return def;
+	}
+}
+
+public void st_setInt(String key, int val) {
+	st_put(key, String.valueOf(val));
+}
+
+// ---------- 阅读进度 ----------
+// 存页号而不是百分比；同时存分页参数，参数不一致时由调用方按比例换算。
+
+public void st_progressSave(String surl, int page, int pageAll, String title, String author) {
+	try {
+		// 分页参数在 net 模块里；本函数可能在没有装载 net 的解释器里被调用
+		// （首页补元信息的那个路径就是），不在这里补会报 Command not found: net_w()
+		i.fn("net");
+		JSONObject o = new JSONObject();
+		o.put("surl", surl);
+		o.put("title", title == null ? "" : title);
+		o.put("author", author == null ? "" : author);
+		o.put("page", page);
+		o.put("pageAll", pageAll);
+		o.put("w", net_w());
+		o.put("h", net_h());
+		o.put("fsize", net_fsize());
+		o.put("updatedAt", System.currentTimeMillis());
+		st_put("progress_" + surl, o.toString());
+	} catch (Throwable t) {
+		i.syso("STORE progress ! " + t);
+	}
+}
+
+// 全部阅读进度，按 updatedAt 倒序
+public JSONArray st_progressAllList() {
+	JSONArray out = new JSONArray();
+	try {
+		i.fn("store");
+		String[] files = st_list("progress_");
+		for (int k = 0; k < files.length; k++) {
+			String body = st_getRaw(files[k]);
+			if (body == null) {
+				continue;
+			}
+			try {
+				out.put(new JSONObject(body));
+			} catch (Throwable t) {
+			}
+		}
+	} catch (Throwable t) {
+	}
+	return out;
+}
+
+// 全部阅读进度，按 updatedAt 倒序。用 Collections.sort 而不是插入排序：
+// 历史会随读过的书不断增加，O(n²) 在 BeanShell 解释执行下几百条就会卡住「我的」页。
+public JSONArray st_progressSorted() {
+	JSONArray out = new JSONArray();
+	try {
+		JSONArray all = st_progressAllList();
+		ArrayList list = new ArrayList();
+		for (int k = 0; k < all.length(); k++) {
+			JSONObject o = all.optJSONObject(k);
+			if (o != null) {
+				list.add(o);
+			}
+		}
+		Collections.sort(list, new Comparator() {
+			public int compare(Object a, Object b) {
+				long x = ((JSONObject) a).optLong("updatedAt", 0);
+				long y = ((JSONObject) b).optLong("updatedAt", 0);
+				if (x == y) {
+					return 0;
+				}
+				return x > y ? -1 : 1;
+			}
+		});
+		for (int k = 0; k < list.size(); k++) {
+			out.put(list.get(k));
+		}
+	} catch (Throwable t) {
+		i.syso("STORE progressSorted ! " + t);
+	}
+	return out;
+}
+
+// 按文件名直接读（st_list 返回的是规范化后的文件名）
+public String st_getRaw(String fileName) {
+	try {
+		File f = new File(st_kvDir(), fileName);
+		if (!f.exists()) {
+			return null;
+		}
+		FileInputStream in = new FileInputStream(f);
+		BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+		StringBuilder sb = new StringBuilder();
+		String line = r.readLine();
+		while (line != null) {
+			sb.append(line);
+			line = r.readLine();
+		}
+		r.close();
+		return sb.toString();
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public JSONObject st_progressLoad(String surl) {
+	String s = st_get("progress_" + surl);
+	if (s == null) {
+		return null;
+	}
+	try {
+		return new JSONObject(s);
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+// 参数不同则按比例换算；返回 0 表示无进度
+public int st_progressPage(String surl, int pageAll) {
+	JSONObject o = st_progressLoad(surl);
+	if (o == null) {
+		return 0;
+	}
+	try {
+		i.fn("net");   // 同上：换算要用分页参数
+		int page = o.optInt("page", 0);
+		int oldAll = o.optInt("pageAll", 0);
+		String w = o.optString("w", "");
+		String h = o.optString("h", "");
+		String f = o.optString("fsize", "");
+		if (page < 1) {
+			return 0;
+		}
+		boolean same = w.equals(net_w()) && h.equals(net_h()) && f.equals(net_fsize());
+		if (same || oldAll <= 0 || pageAll <= 0) {
+			return net_clampPage(page, pageAll);
+		}
+		int guess = (int) Math.round((double) page / (double) oldAll * (double) pageAll);
+		return net_clampPage(guess, pageAll);
+	} catch (Throwable t) {
+		return 0;
+	}
+}
+
+// ---------- 阅读外观（0 起下标） ----------
+
+public int st_readerBg() {
+	return st_getInt("rd.bg", 0);
+}
+
+public int st_readerFont() {
+	return st_getInt("rd.font", 1);
+}
+
+public int st_readerLetter() {
+	return st_getInt("rd.letter", 0);
+}
+
+public int st_readerLine() {
+	return st_getInt("rd.line", 1);
+}

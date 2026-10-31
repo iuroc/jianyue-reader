@@ -1,0 +1,253 @@
+// 期刊 Tab：与图书 Tab 同一套分类栏、三列网格与加载槽，只是数据源不同。
+
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public int[] magCatIds() {
+	return new int[] {6, 3, 4, 5, 8, 9, 10};
+}
+
+public String[] magCatNames() {
+	return new String[] {"精品推荐", "时政军事", "文学艺术", "时尚生活", "财经管理", "文化综合", "其它"};
+}
+
+public int mag_flag(String key) {
+	try {
+		Object o = ui_get(key);
+		if (o != null) {
+			return Integer.parseInt(String.valueOf(o));
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}
+
+public void mag_wire() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("shelf");
+	i.fn("cattabs");
+}
+
+public View mag_page(int sel) {
+	mag_wire();
+	LinearLayout page = ui_col();
+	page.addView(wg_header("期刊", "", null, null));
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	View bar = ct_build(magCatNames(), sel, new Runnable() {
+		public void run() {
+			mag_switch();
+		}
+	});
+	page.addView(bar);
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	ui_addWeight(page, sv, -1, 0, 1f);
+	ui_reg("mag.sv", sv);
+
+	LinearLayout body = ui_col();
+	sv.addView(body, new FrameLayout.LayoutParams(-1, -2));
+
+	LinearLayout grid = sh_grid();
+	body.addView(grid, new LinearLayout.LayoutParams(-1, -2));
+	ui_reg("mag.grid", grid);
+
+	LinearLayout slot = sh_moreSlot();
+	body.addView(slot, new LinearLayout.LayoutParams(-1, ui_dp(96)));
+	ui_reg("mag.slot", slot);
+	sh_moreSet(slot, 1, null);
+
+	ui_reg("mag.cat", String.valueOf(sel));
+	ui_reg("mag.pg", "1");
+	ui_reg("mag.more", "0");
+	ui_reg("mag.loading", "1");
+
+	ct_setSelected(sel);
+	sh_skeleton(grid);
+	mag_load(sel, 1);
+	return page;
+}
+
+public void mag_switch() {
+	mag_wire();
+	int idx = ct_picked();
+	if (idx == mag_flag("mag.cat")) {
+		return;
+	}
+	ct_setSelected(idx);
+	ui_reg("mag.cat", String.valueOf(idx));
+	ui_reg("mag.pg", "1");
+	ui_reg("mag.more", "0");
+	ui_reg("mag.loading", "1");
+
+	ct_reselect(magCatNames(), idx, new Runnable() {
+		public void run() {
+			mag_switch();
+		}
+	});
+
+	LinearLayout grid = (LinearLayout) ui_get("mag.grid");
+	LinearLayout slot = (LinearLayout) ui_get("mag.slot");
+	ScrollView sv = (ScrollView) ui_get("mag.sv");
+	if (sv != null) {
+		sv.scrollTo(0, 0);
+	}
+	sh_skeleton(grid);
+	sh_moreSet(slot, 1, null);
+	mag_load(idx, 1);
+}
+
+public void mag_reload() {
+	mag_wire();
+	FrameLayout host = (FrameLayout) ui_get("home.content");
+	if (host == null) {
+		return;
+	}
+	int cat = mag_flag("mag.cat");
+	host.removeAllViews();
+	host.addView(mag_page(cat), new FrameLayout.LayoutParams(-1, -1));
+}
+
+public void mag_more() {
+	mag_wire();
+	if (mag_flag("mag.loading") == 1) {
+		return;
+	}
+	if (mag_flag("mag.more") == 0) {
+		return;
+	}
+	LinearLayout slot = (LinearLayout) ui_get("mag.slot");
+	sh_moreSet(slot, 1, null);
+	mag_load(mag_flag("mag.cat"), mag_flag("mag.pg") + 1);
+}
+
+// 与图书一致：只读本地书刊库
+public void mag_load(int catIdx, int page) {
+	mag_wire();
+	i.fn("indexer");
+	ui_reg("mag.loading", "1");
+	String spec = "m:" + magCatIds()[catIdx];
+	int want = page;
+	ui_log("mag load cat=" + catIdx + " page=" + page);
+
+	if (!ix_ready()) {
+		return;
+	}
+
+	new Thread(new Runnable() {
+		public void run() {
+			try {
+				i.fn("indexer");
+				JSONArray slice = ix_libPage(spec, want, 30);
+				JSONArray all = ix_libAll(spec);
+				int total = all == null ? 0 : all.length();
+				JSONArray got = slice;
+				int pg = want;
+				int mv = (want * 30 < total) ? 1 : 0;
+				activity.runOnUiThread(new Runnable() {
+					public void run() {
+						mag_render(pg, got, mv);
+					}
+				});
+			} catch (Throwable t) {
+				i.syso("MAG ! " + t);
+				int pg = want;
+				activity.runOnUiThread(new Runnable() {
+					public void run() {
+						mag_render(pg, null, 0);
+					}
+				});
+			}
+		}
+	}).start();
+}
+
+
+public void mag_render(int page, JSONArray arr, int more) {
+	mag_wire();
+	ui_reg("mag.loading", "0");
+	LinearLayout grid = (LinearLayout) ui_get("mag.grid");
+	LinearLayout slot = (LinearLayout) ui_get("mag.slot");
+
+	if (arr == null) {
+		if (page == 1) {
+			if (grid != null) {
+				grid.removeAllViews();
+				grid.addView(wg_message("加载失败", "检查网络后重试", "重试", new Runnable() {
+					public void run() {
+						mag_reload();
+					}
+				}), new LinearLayout.LayoutParams(-1, ui_dp(260)));
+			}
+			sh_moreSet(slot, 2, null);
+		} else {
+			sh_moreSet(slot, 3, new Runnable() {
+				public void run() {
+					mag_more();
+				}
+			});
+		}
+		return;
+	}
+
+	int n = arr.length();
+	if (page == 1) {
+		if (grid != null) {
+			grid.removeAllViews();
+		}
+		if (n == 0) {
+			if (grid != null) {
+				grid.addView(wg_message("这个分类暂时没有内容", "换个分类看看", "", null),
+						new LinearLayout.LayoutParams(-1, ui_dp(260)));
+			}
+			sh_moreSet(slot, 2, null);
+			return;
+		}
+	}
+
+	Runnable open = new Runnable() {
+		public void run() {
+			mag_open();
+		}
+	};
+	if (grid != null) {
+		sh_append(grid, arr, true, open);
+	}
+
+	ui_reg("mag.pg", String.valueOf(page));
+	int hasMore = more;
+	ui_reg("mag.more", String.valueOf(hasMore));
+
+	if (hasMore == 1) {
+		sh_moreSet(slot, 0, new Runnable() {
+			public void run() {
+				mag_more();
+			}
+		});
+	} else {
+		sh_moreSet(slot, 2, null);
+	}
+}
+
+public void mag_open() {
+	try {
+		Object o = i.sss("sh.pick");
+		if (o == null) {
+			return;
+		}
+		i.sss("detail.mag", String.valueOf(o));
+		i.uigo("magdetail.iyu");
+	} catch (Throwable t) {
+		ui_log("mag_open " + t);
+	}
+}

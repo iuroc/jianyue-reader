@@ -1,0 +1,204 @@
+// 关于页：作者 / 开源地址 / 使用声明。
+// 声明文案承担的是「学习用途 + 自设试用期 + 不对外发布 + 被第三方窃取免责」的表述，
+// 措辞改动前先和作者确认，不要当作普通文案润色。
+// 注意：中国现行法律里**没有**「学习用软件安装后限期卸载」这类条款，所以文案只说这是
+// 作者自设的实验自律要求，不冒充法规依据；接口也不是官方公开 API，是抓包得到的地址。
+
+import android.content.Intent;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+public String ab_author() {
+	return "github.com/iuroc";
+}
+
+public String ab_repo() {
+	return "https://github.com/iuroc/jianyue-reader";
+}
+
+public void first() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	ui_init(ui_root());
+	build();
+}
+
+public void second() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void again() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void back() {
+	activity.finish();
+}
+
+public void key(Object kc) {
+	int code = 0;
+	try {
+		if (kc instanceof Number) {
+			code = ((Number) kc).intValue();
+		}
+	} catch (Throwable t) {
+	}
+	if (code == 4) {
+		back();
+	}
+}
+
+// ---------- 骨架 ----------
+
+public void build() {
+	View bg = ui_layer("bg");
+	if (bg != null) {
+		bg.setBackgroundColor(ui_color(th_bg()));
+	}
+	View safe = ui_layer("safe");
+	if (safe == null) {
+		return;
+	}
+
+	LinearLayout page = ui_col();
+	ui_add((ViewGroup) safe, page, -1, -1);
+
+	page.addView(wg_header("关于", "", new Runnable() {
+		public void run() {
+			back();
+		}
+	}, null));
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	ui_addWeight(page, sv, -1, 0, 1f);
+
+	LinearLayout body = ui_col();
+	body.setPadding(ui_dp(20), ui_dp(24), ui_dp(20), ui_dp(40));
+	sv.addView(body, new FrameLayout.LayoutParams(-1, -2));
+
+	// 品牌
+	TextView brand = ui_text("简阅", 28, th_ink1());
+	brand.setTypeface(null, Typeface.BOLD);
+	brand.setLetterSpacing(0.18f);
+	body.addView(brand);
+
+	// 版本号运行时从包读取，改 AndroidManifest 即可，页面不再写死
+	String ver = ui_versionText();
+	TextView tagline = ui_text("歌德借阅机内容阅读器 · " + ("开发版".equals(ver) ? "开发版" : "版本 " + ver), 13, th_ink2());
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
+	tlp.topMargin = ui_dp(8);
+	tagline.setLayoutParams(tlp);
+	body.addView(tagline);
+
+	body.addView(ab_pill("实验室试用版 · 学习用途"));
+
+	// 作者 / 项目：标签占左列、值在右，三行同一套对齐；地址本身可点
+	body.addView(ab_kv("作者", ab_author(), ab_author(), 28));
+	body.addView(ab_kv("QQ", "2329632875", null, 0));
+	body.addView(ab_kv("项目", ab_repo(), ab_repo(), 8));
+
+	body.addView(ab_note("以学习研究为目的开源，欢迎交流指正。"));
+
+	// 合规声明
+	TextView head = ui_text("使用说明", 17, th_ink1());
+	LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-1, -2);
+	hlp.topMargin = ui_dp(28);
+	head.setLayoutParams(hlp);
+	body.addView(head);
+
+	body.addView(ab_para("本应用是个人学习与研究性质的实验室软件，用于验证 Android 客户端开发的学习方法，不以商业发布、分发或运营为目的，与歌德借阅机运营方及书刊出版方均无关联。"));
+	body.addView(ab_para("应用使用的书刊目录与正文接口并非官方公开 API，而是通过数据抓包方式获得的接口地址，仅用于个人学习研究，不用于任何商业用途，也不保证接口的可用性与长期有效性。"));
+	body.addView(ab_para("本项目的实验试用期为安装后 1 小时：请在 1 小时内完成体验并卸载，避免长期使用、二次分发或投入生产环境。这一限制是作者自设的实验自律要求，并非法律法规的规定；使用者仍应自行遵守所在地的法律法规。"));
+	body.addView(ab_para("本应用正常情况下不对外发布。若本应用被第三方恶意窃取、篡改或传播，该行为与作者无关，相应责任由实施者自行承担；任何人不得以本项目名义对外提供下载或服务。"));
+	body.addView(ab_para("若相关权利人认为本项目存在不当之处，请联系作者（QQ 2329632875）沟通处理。"));
+
+	body.addView(ab_note("书刊目录与正文来自歌德电子书借阅机公开服务，内容版权归原出版方所有。"));
+}
+
+// ---------- 组件 ----------
+
+// 小圆角标签：描边朱砂、透明底，用来把「这软件是什么性质」摆在最上面
+public TextView ab_pill(String s) {
+	TextView t = ui_text(s, 12, th_accent());
+	t.setLetterSpacing(0.06f);
+	t.setGravity(Gravity.CENTER);
+	t.setPadding(ui_dp(12), ui_dp(5), ui_dp(12), ui_dp(5));
+
+	GradientDrawable d = new GradientDrawable();
+	d.setShape(GradientDrawable.RECTANGLE);
+	d.setCornerRadius(ui_dp(14));
+	d.setColor(ui_color(th_bg()));
+	d.setStroke(ui_dp(1), ui_color(th_accent()));
+	t.setBackground(d);
+
+	LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+	lp.topMargin = ui_dp(14);
+	t.setLayoutParams(lp);
+	return t;
+}
+
+// 键值行：左列固定 56dp 标签、右侧值；url 非空时值画成朱砂外链，点开系统浏览器
+// （没有浏览器时静默失败，不弹窗打断）
+public View ab_kv(String k, String v, String url, int topDp) {
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+	row.setPadding(ui_dp(0), ui_dp(8), ui_dp(0), ui_dp(8));
+	LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+	rlp.topMargin = ui_dp(topDp);
+	row.setLayoutParams(rlp);
+
+	TextView kt = ui_text(k, 13, th_ink2());
+	row.addView(kt, new LinearLayout.LayoutParams(ui_dp(56), -2));
+
+	boolean link = url != null && url.length() > 0;
+	TextView vt = ui_text(v, 15, link ? th_accent() : th_ink1());
+	vt.setLineSpacing(0f, 1.3f);
+	row.addView(vt, new LinearLayout.LayoutParams(0, -2, 1f));
+
+	if (link) {
+		String u = url;
+		row.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View vv) {
+				try {
+					Intent it = new Intent("android.intent.action.VIEW", Uri.parse(u));
+					activity.startActivity(it);
+				} catch (Throwable t) {
+				}
+			}
+		});
+		wg_ripple(row, 6, false);
+	}
+	return row;
+}
+
+public TextView ab_para(String s) {
+	TextView t = ui_text(s, 15, th_ink1());
+	t.setLineSpacing(0f, 1.55f);
+	LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+	lp.topMargin = ui_dp(14);
+	t.setLayoutParams(lp);
+	return t;
+}
+
+public TextView ab_note(String s) {
+	TextView t = ui_text(s, 13, th_ink2());
+	t.setLineSpacing(0f, 1.4f);
+	LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+	lp.topMargin = ui_dp(14);
+	t.setLayoutParams(lp);
+	return t;
+}

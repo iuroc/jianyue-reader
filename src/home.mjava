@@ -1,0 +1,284 @@
+// 首页：四 Tab 容器（首页 / 图书 / 期刊 / 我的）。
+// 各 Tab 的真实内容在后续任务里填充，这里先落骨架、页头与底部导航。
+
+import android.graphics.Typeface;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+public void first() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("indexer");
+	i.fn("perm");
+	// 先把主界面建好，再压进度页上去：进度页关掉时下面是完整的首页，不会白屏
+	ui_init(ui_root());
+	// 权限不齐就停在闸门页，主界面一点都不建
+	if (!pm_ok()) {
+		buildGate();
+		return;
+	}
+	buildShell();
+	if (!ix_ready() || ix_flag("boot.rebuild")) {
+		i.sss("boot.pending", "1");
+		i.uigo("boot.iyu");
+	}
+}
+
+public void second() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void again() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("indexer");
+	i.fn("perm");
+	// ui_reg 的 bg/safe/overlay 是全局键，每个页面 ui_init() 都会覆盖。
+	// 从阅读器等页面回来后，它们指向的是那一页（已销毁）的 View：此时换主题触发的
+	// buildShell() 会画进死树里，表现成「点了没反应」。发现不是自己这层就重建。
+	boolean rebind = false;
+	View safeNow = ui_layer("safe");
+	if (safeNow == null || safeNow.getContext() != activity) {
+		ui_init(ui_root());
+		rebind = true;
+	}
+	// 授权框关掉后回来：重新校验；还不齐就继续停在闸门
+	if (!pm_ok()) {
+		buildGate();
+		return;
+	}
+	if (rebind) {
+		buildShell();
+	}
+	if (!ix_ready() || ix_flag("boot.rebuild")) {
+		i.sss("boot.pending", "1");
+		i.uigo("boot.iyu");
+		return;
+	}
+	if (ui_get("home.nav") == null) {
+		ui_init(ui_root());
+		buildShell();
+		return;
+	}
+	// 从进度页回来：建库期间 Tab 内容是空的，重载当前 Tab
+	if (ix_flag("boot.pending")) {
+		i.sss("boot.pending", "0");
+		selectTab(tabIndex());
+		return;
+	}
+	ui_insets();
+}
+
+public void buildShell() {
+	View bg = ui_layer("bg");
+	if (bg != null) {
+		bg.setBackgroundColor(ui_color(th_bg()));
+	}
+	View safe = ui_layer("safe");
+	if (safe == null) {
+		ui_log("home safe=null");
+		return;
+	}
+	((ViewGroup) safe).removeAllViews();
+
+	LinearLayout col = ui_col();
+	ui_add((ViewGroup) safe, col, -1, -1);
+
+	FrameLayout content = ui_frame();
+	ui_addWeight(col, content, -1, 0, 1f);
+	ui_reg("home.content", content);
+
+	LinearLayout nav = ui_row();
+	nav.setBackgroundColor(ui_color(th_bg()));
+	ui_reg("home.nav", nav);
+	col.addView(nav, new LinearLayout.LayoutParams(-1, ui_dp(56)));
+
+	selectTab(tabIndex());
+	ui_log("home shell ok");
+}
+
+// 权限闸门：缺权限时不建主界面，只给「去授权」；授权后 resume 会重新校验
+public void buildGate() {
+	i.fn("perm");
+	View bg = ui_layer("bg");
+	if (bg != null) {
+		bg.setBackgroundColor(ui_color(th_bg()));
+	}
+	View safe = ui_layer("safe");
+	if (safe == null) {
+		return;
+	}
+	((ViewGroup) safe).removeAllViews();
+
+	LinearLayout box = ui_col();
+	box.setGravity(Gravity.CENTER);
+
+	TextView t = ui_text("需要授权后才能使用", 17, th_ink1());
+	t.setGravity(Gravity.CENTER);
+	box.addView(t, new LinearLayout.LayoutParams(-1, -2));
+
+	String[] miss = pm_missing();
+	for (int k = 0; k < miss.length; k++) {
+		TextView l = ui_text("· " + pm_label(miss[k]), 13, th_ink2());
+		l.setGravity(Gravity.CENTER);
+		LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+		lp.topMargin = ui_dp(8);
+		lp.leftMargin = ui_dp(32);
+		lp.rightMargin = ui_dp(32);
+		l.setLayoutParams(lp);
+		box.addView(l);
+	}
+
+	TextView a = ui_text("去授权", 15, th_accent());
+	a.setGravity(Gravity.CENTER);
+	a.setPadding(ui_dp(16), ui_dp(12), ui_dp(16), ui_dp(12));
+	LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+	alp.topMargin = ui_dp(20);
+	a.setLayoutParams(alp);
+	wg_ripple(a, 20, false);
+	a.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			// 点击回调是新解释器：先装载模块再调函数
+			i.fn("perm");
+			pm_request();
+		}
+	});
+	box.addView(a);
+
+	TextView h = ui_text("没有弹出授权框，或之前点了拒绝：请到系统设置 → 应用 → 简阅 → 权限里手动开启，然后返回本页", 13, th_ink2());
+	h.setGravity(Gravity.CENTER);
+	LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-1, -2);
+	hlp.topMargin = ui_dp(16);
+	hlp.leftMargin = ui_dp(32);
+	hlp.rightMargin = ui_dp(32);
+	h.setLayoutParams(hlp);
+	box.addView(h);
+
+	ui_fplace((ViewGroup) safe, box, -1, -2, Gravity.CENTER);
+}
+
+// 主题切换后整壳重绘，保留当前 Tab
+public void repaint() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	buildShell();
+	// 换主题后状态栏图标明暗跟着走
+	ui_statusIcons(!th_night());
+}
+
+public int tabIndex() {
+	try {
+		Object o = ui_get("home.tab");
+		if (o != null) {
+			return Integer.parseInt(String.valueOf(o));
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}
+
+public void selectTab(int idx) {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	ui_reg("home.tab", String.valueOf(idx));
+
+	FrameLayout content = (FrameLayout) ui_get("home.content");
+	if (content != null) {
+		content.removeAllViews();
+		content.addView(tabPage(idx), new FrameLayout.LayoutParams(-1, -1));
+	}
+
+	LinearLayout nav = (LinearLayout) ui_get("home.nav");
+	if (nav != null) {
+		nav.removeAllViews();
+		String[] names = {"home", "book", "mag", "person"};
+		String[] labels = {"首页", "图书", "期刊", "我的"};
+		for (int k = 0; k < 4; k++) {
+			nav.addView(navItem(k, names[k], labels[k], k == idx));
+		}
+	}
+}
+
+public LinearLayout navItem(int idx, String icon, String label, boolean on) {
+	String color = on ? th_ink1() : th_ink2();
+
+	LinearLayout item = ui_col();
+	item.setGravity(Gravity.CENTER);
+	item.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1f));
+
+	ImageView iv = ic_make(icon, 24, color);
+	item.addView(iv, new LinearLayout.LayoutParams(ui_dp(24), ui_dp(24)));
+
+	TextView t = ui_text(label, 13, color);
+	if (on) {
+		t.setTypeface(null, Typeface.BOLD);
+	}
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
+	tlp.topMargin = ui_dp(2);
+	t.setLayoutParams(tlp);
+	item.addView(t);
+
+	int picked = idx;
+	item.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			selectTab(picked);
+		}
+	});
+	wg_ripple(item, 0, false);
+	return item;
+}
+
+// 各 Tab 的具体内容：图书已接入，其余仍为占位。
+public View tabPage(int idx) {
+	if (idx == 1) {
+		i.fn("book");
+		return book_page(0);
+	}
+	if (idx == 2) {
+		i.fn("mag");
+		return mag_page(0);
+	}
+	if (idx == 0) {
+		i.fn("lib");
+		return lib_page();
+	}
+	if (idx == 3) {
+		i.fn("mine");
+		return mine_page();
+	}
+
+	String[] titles = {"首页", "图书", "期刊", "我的"};
+	String[] hints = {"继续阅读与精选", "分类浏览", "分类浏览", "历史与设置"};
+
+	LinearLayout page = ui_col();
+	if (idx == 0) {
+		page.addView(wg_header(titles[idx], "search", null, new Runnable() {
+			public void run() {
+				i.uigo("search.iyu");
+			}
+		}));
+	} else {
+		page.addView(wg_header(titles[idx], "", null, null));
+	}
+
+	LinearLayout body = ui_col();
+	body.setGravity(Gravity.CENTER);
+	ui_addWeight(page, body, -1, 0, 1f);
+
+	body.addView(ui_text(hints[idx], 15, th_ink2()));
+	return page;
+}

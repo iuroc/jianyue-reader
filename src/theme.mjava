@@ -1,0 +1,101 @@
+// 设计 token：纸（日）/ 夜 两套。页面只从这里取色，不写十六进制字面量。
+// 主题选择存 i.sss("jy.theme")，字符串 "0"=纸 "1"=夜，跨 call 存活、每次运行重置。
+
+public int th_mode() {
+	try {
+		Object o = i.sss("jy.theme");
+		if (o != null && String.valueOf(o).equals("1")) {
+			return 1;
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}
+
+public void th_set(int m) {
+	try {
+		i.sss("jy.theme", String.valueOf(m));
+	} catch (Throwable t) {
+	}
+}
+
+public boolean th_night() {
+	return th_mode() == 1;
+}
+
+// ---------- 颜色角色 ----------
+
+public String th_bg() {
+	return th_bgOf(th_mode());
+}
+
+public String th_inkOf(int m) {
+	return m == 1 ? "#E9E4D8" : "#1C1A17";
+}
+
+// 按主题编号取色：主题选择器要画成「它代表的那套主题」，不能跟随当前主题
+public String th_bgOf(int m) {
+	return m == 1 ? "#15140F" : "#F7F4EE";
+}
+
+public String th_surface() {
+	return th_night() ? "#1E1C17" : "#FFFDF8";
+}
+
+// 需要「跳出来」的卡片：纯白（夜色下用比 surface 略亮的一档）
+public String th_card() {
+	return th_night() ? "#23211B" : "#FFFFFF";
+}
+
+public String th_ink1() {
+	return th_inkOf(th_mode());
+}
+
+public String th_ink2() {
+	return th_night() ? "#9A9384" : "#6B6459";
+}
+
+public String th_hairline() {
+	return th_night() ? "#2E2B25" : "#E4DED2";
+}
+
+public String th_accent() {
+	return th_night() ? "#C4634E" : "#A6402D";
+}
+
+// ---------- 派生 ----------
+
+// 骨架 / 占位块
+public String th_placeholder() {
+	return th_night() ? "#26231D" : "#EDE8DD";
+}
+
+// 按压涟漪：朱砂 8%
+public String th_ripple() {
+	return th_night() ? "#1FC4634E" : "#14A6402D";
+}
+
+// 禁用态（30% 墨色）
+public String th_disabled() {
+	return th_night() ? "#4DE9E4D8" : "#4D1C1A17";
+}
+
+// ---------- 阅读器专属 ----------
+
+// 阅读器背景四档：0 纸 / 1 米 / 2 绿 / 3 夜
+public String th_reader_bg(int i) {
+	if (i == 1) return "#F5EDDC";
+	if (i == 2) return "#E7EFE3";
+	if (i == 3) return "#15140F";
+	return "#F7F4EE";
+}
+
+public String th_reader_ink(int i) {
+	if (i == 3) return "#E9E4D8";
+	return "#1C1A17";
+}
+
+public String th_reader_ink2(int i) {
+	if (i == 3) return "#9A9384";
+	return "#6B6459";
+}

@@ -1,0 +1,1091 @@
+// 阅读器：一次只渲染一页；底栏常驻；正文按 30 页分段缓存；目录与外观按需浮出。
+
+import android.app.AlertDialog;
+import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+// ---------- 入口 ----------
+
+public void first() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("net");
+	i.fn("store");
+	ui_init(ui_root());
+	build();
+}
+
+public void second() {
+	i.fn("ui");
+	rd_insets();
+}
+
+public void again() {
+	i.fn("ui");
+	// 从别的页面回来时系统会把系统栏弹回来，重新藏一次
+	rd_fullscreen();
+	rd_insets();
+}
+
+// 阅读页满屏：只藏状态栏，底部导航条不动（底栏按钮还要用）
+public void rd_fullscreen() {
+	try {
+		WindowInsetsController wic = activity.getWindow().getInsetsController();
+		if (wic == null) {
+			return;
+		}
+		wic.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+		wic.hide(WindowInsets.Type.statusBars());
+	} catch (Throwable t) {
+		ui_log("rd fullscreen " + t);
+	}
+}
+
+// 状态栏藏掉后顶部不该再留那一条：ui_insets 拿不到 inset 时会走 dimens 兜底，
+// 这里把顶部补白清零，底部（导航条 / 键盘 / 缺口）照旧
+public void rd_insets() {
+	ui_insets();
+	View safe = ui_layer("safe");
+	if (safe != null) {
+		safe.setPadding(0, 0, 0, safe.getPaddingBottom());
+	}
+	View overlay = ui_layer("overlay");
+	if (overlay != null) {
+		overlay.setPadding(0, 0, 0, overlay.getPaddingBottom());
+	}
+}
+
+public void key(Object kc) {
+	rd_wire();
+	i.fn("toc");
+	int code = 0;
+	try {
+		if (kc instanceof Number) {
+			code = ((Number) kc).intValue();
+		}
+	} catch (Throwable t) {
+	}
+	if (code != 4) {
+		return;
+	}
+	if (rd_panelOpen()) {
+		rd_panel(false);
+		return;
+	}
+	i.fn("toc");
+	if (toc_isOpen()) {
+		toc_close();
+		return;
+	}
+	rd_saveProgress();
+	activity.finish();
+}
+
+// ---------- 骨架 ----------
+
+public void build() {
+	ui_log("rd build>");
+	// 阅读页满屏：状态栏藏起来，正文从屏幕顶边开始
+	rd_fullscreen();
+	// 先清掉上一本书留下的页码 / 总页数 / 目录：ui_reg 的句柄跨页面存活，
+	// 不清的话新书在目录回来之前会先显示上一本的「300 / 500」
+	rd_reset();
+	i.fn("net");
+	// 缓存对象在 UI 线程建，别等后台线程第一次调用时去写 i.sss
+	net_cacheInit();
+	View bg = ui_layer("bg");
+	if (bg != null) {
+		bg.setBackgroundColor(ui_color(th_reader_bg(st_readerBg())));
+	}
+	View safe = ui_layer("safe");
+	if (safe == null) {
+		ui_log("rd build safe=null");
+		return;
+	}
+	ui_log("rd build bg ok");
+
+	i.fn("toc");
+	LinearLayout col = ui_col();
+	toc_wrap((ViewGroup) safe, col);
+
+	// 底栏浮在正文之上（不是分栏）：显示/隐藏不会让正文重排，阅读位置不跳
+	FrameLayout stage = ui_frame();
+	ui_addWeight(col, stage, -1, 0, 1f);
+	ui_reg("rd.stage", stage);
+
+	FrameLayout holder = ui_frame();
+	ui_fplace(stage, holder, -1, -1, Gravity.TOP | Gravity.LEFT);
+	ui_reg("rd.holder", holder);
+	ui_log("rd build holder ok");
+
+	LinearLayout bar = rd_bar();
+	ui_reg("rd.bar", bar);
+	ui_fplace(stage, bar, -1, ui_dp(48), Gravity.BOTTOM);
+	// 建栏之后先跑一次：此时 pageAll=0，底栏全部置灰，等正文渲染完再放开
+	rd_updateBar();
+	// 进来先亮着：短页滚不动、不会触发滚动收起，所以不必再靠内容长度去猜
+	rd_barShow(true);
+	ui_log("rd build bar ok");
+
+	rd_titleShow();
+	ui_log("rd build title ok");
+	rd_open();
+}
+
+// 阅读页自己的状态一律从这里起步：page=1、pageAll=0、无目录
+public void rd_reset() {
+	ui_reg("rd.page", "1");
+	ui_reg("rd.pageAll", "0");
+	ui_reg("rd.cats", "[]");
+	ui_reg("rd.title", "");
+	ui_reg("rd.author", "");
+}
+
+public void rd_titleShow() {
+	String title = "";
+	try {
+		Object o = i.sss("reader.title");
+		if (o != null) {
+			title = String.valueOf(o);
+		}
+	} catch (Throwable t) {
+	}
+	ui_reg("rd.title", title);
+
+	String author = "";
+	try {
+		Object a = i.sss("reader.author");
+		if (a != null) {
+			author = String.valueOf(a);
+		}
+	} catch (Throwable t) {
+	}
+	ui_reg("rd.author", author);
+}
+
+// ---------- 打开 ----------
+
+// 打开失败：按来源分三类，原始错误直接上屏，细节收进原生弹窗。
+//   net    网络取不到（非 2xx / 连接异常）        → 重试
+//   gone   令牌页被重定向到 error400（书不存在）    → 重建书刊库
+//   server 服务端 result!=1 且带了 errorMsg        → 重试
+public void rd_fail(String kind, String detail) {
+	boolean noLib = "gone".equals(kind);
+	String title = noLib ? "这本书暂时打不开" : ("server".equals(kind) ? "服务端返回异常" : "网络连接失败");
+	String desc = noLib ? "接口提示这本书不存在或已下线，重建书刊库后再从搜索进入"
+			: ("server".equals(kind) ? "服务端没有返回可用内容，稍后重试" : "没有取到这本书的目录，检查网络后重试");
+	String action = noLib ? "重建书刊库" : "重试";
+	boolean rebuild = noLib;
+	Runnable run = new Runnable() {
+		public void run() {
+			if (rebuild) {
+				// 回上一页；回到首页时的 resume 会把用户带进进度页重建
+				i.sss("boot.rebuild", "1");
+				activity.finish();
+			} else {
+				rd_open();
+			}
+		}
+	};
+	rd_errorView(title, desc, action, run, detail);
+}
+
+// 翻页时某一段没取回来：只影响这一页，给重试而不是动整个书刊库
+public void rd_chunkFail(int page, String detail) {
+	int p = page;
+	Runnable run = new Runnable() {
+		public void run() {
+			rd_jump(p);
+		}
+	};
+	rd_errorView("这一页加载失败", "第 " + page + " 页没能取回，可以重试或翻到别的页", "重试", run, detail);
+}
+
+// 失败视图的唯一实现：标题 / 原始错误第一行 / 说明 / 主操作 / 查看详情
+public void rd_errorView(String title, String desc, String action, Runnable run, String detail) {
+	rd_wire();
+	FrameLayout holder = (FrameLayout) ui_get("rd.holder");
+	if (holder == null) {
+		return;
+	}
+	holder.removeAllViews();
+
+	LinearLayout box = ui_col();
+	box.setGravity(Gravity.CENTER);
+
+	TextView t = ui_text(title, 17, th_ink1());
+	t.setGravity(Gravity.CENTER);
+	box.addView(t, new LinearLayout.LayoutParams(-1, -2));
+
+	// 原始错误类型：只取第一行上屏，细节走下面的链接
+	String raw = rd_firstLine(detail);
+	if (raw.length() > 0) {
+		TextView r = ui_text(raw, 13, th_ink2());
+		r.setGravity(Gravity.CENTER);
+		LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+		rlp.topMargin = ui_dp(10);
+		rlp.leftMargin = ui_dp(24);
+		rlp.rightMargin = ui_dp(24);
+		r.setLayoutParams(rlp);
+		box.addView(r);
+	}
+
+	TextView s = ui_text(desc, 13, th_ink2());
+	s.setGravity(Gravity.CENTER);
+	LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+	slp.topMargin = ui_dp(8);
+	slp.leftMargin = ui_dp(32);
+	slp.rightMargin = ui_dp(32);
+	s.setLayoutParams(slp);
+	box.addView(s);
+
+	TextView a = ui_text(action, 15, th_accent());
+	a.setGravity(Gravity.CENTER);
+	a.setPadding(ui_dp(16), ui_dp(12), ui_dp(16), ui_dp(12));
+	LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+	alp.topMargin = ui_dp(16);
+	a.setLayoutParams(alp);
+	wg_ripple(a, 20, false);
+	Runnable ar = run;
+	a.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			ar.run();
+		}
+	});
+	box.addView(a);
+
+	box.addView(rd_link("查看错误详情", detail));
+
+	ui_fplace(holder, box, -1, -2, Gravity.CENTER);
+}
+
+// 文本按钮（下划线链接样式）：点开原生弹窗看完整错误
+public TextView rd_link(String label, String detail) {
+	TextView t = ui_text(label, 13, th_accent());
+	t.setGravity(Gravity.CENTER);
+	t.setPadding(ui_dp(16), ui_dp(10), ui_dp(16), ui_dp(10));
+	// Paint.UNDERLINE_TEXT_FLAG = 8：字面量，避免 BeanShell 解析不到 framework 静态常量
+	t.setPaintFlags(t.getPaintFlags() | 8);
+	LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+	lp.topMargin = ui_dp(4);
+	t.setLayoutParams(lp);
+	wg_ripple(t, 16, false);
+
+	String d = detail;
+	t.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			rd_errorDialog(d);
+		}
+	});
+	return t;
+}
+
+// 原生弹窗：书籍地址 + 错误全文 + 时间，便于截图反馈
+public void rd_errorDialog(String detail) {
+	try {
+		new AlertDialog.Builder(activity)
+				.setTitle("错误详情")
+				.setMessage(rd_errorDetail(detail))
+				.setPositiveButton("关闭", null)
+				.show();
+	} catch (Throwable t) {
+		ui_log("rd dialog " + t);
+	}
+}
+
+// 只给错误类型与时间：书籍地址、请求 URL 都带接口路径，不上界面
+public String rd_errorDetail(String detail) {
+	String when = "";
+	try {
+		when = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+	} catch (Throwable t) {
+		when = String.valueOf(System.currentTimeMillis());
+	}
+	String d = detail == null || detail.length() == 0 ? "（没有记录到错误类型）" : detail;
+	return "错误类型：\n" + d + "\n\n时间：" + when;
+}
+
+public String rd_firstLine(String s) {
+	if (s == null) {
+		return "";
+	}
+	String t = s;
+	int at = t.indexOf("\n");
+	if (at >= 0) {
+		t = t.substring(0, at);
+	}
+	if (t.length() > 60) {
+		t = t.substring(0, 60) + "…";
+	}
+	return t;
+}
+
+// 服务端结果为空且带了 errorMsg 时按「服务端异常」；令牌页缺字段才是「书不存在」
+public String rd_failKind(String e) {
+	String s = e == null ? "" : e;
+	if (s.indexOf("书不存在") >= 0) {
+		return "gone";
+	}
+	if (s.indexOf("服务端拒绝") >= 0) {
+		return "server";
+	}
+	return "net";
+}
+
+public String rd_surl() {
+	try {
+		Object o = i.sss("reader.surl");
+		if (o != null) {
+			return String.valueOf(o);
+		}
+	} catch (Throwable t) {
+	}
+	return "";
+}
+
+public void rd_open() {
+	String surl = rd_surl();
+	ui_log("rd open surl=[" + surl + "]");
+	if (surl.length() == 0) {
+		rd_status("没有可阅读的内容");
+		return;
+	}
+	rd_status("正在打开…");
+	i.fn("net");
+	net_errClear();
+	new Thread(new Runnable() {
+		public void run() {
+			try {
+				i.fn("net");
+				i.fn("store");
+				JSONObject cat = net_catalog(surl);
+				if (cat == null) {
+					// 失败原因取 net 模块记下的原始信息，再按来源分「网络 / 服务端 / 书失效」
+					String e = net_lastError();
+					String kind = rd_failKind(e);
+					i.syso("READER cat ! kind=" + kind + " err=" + e);
+					activity.runOnUiThread(new Runnable() {
+						public void run() {
+							rd_fail(kind, e);
+						}
+					});
+					return;
+				}
+				int all = cat.optInt("pageAll", 0);
+				JSONArray cats = cat.optJSONArray("catalogs");
+				int start = st_progressPage(surl, all);
+				if (start < 1) {
+					start = 1;
+				}
+				ui_reg("rd.pageAll", String.valueOf(all));
+				ui_reg("rd.cats", cats == null ? "[]" : cats.toString());
+				i.syso("READER cat all=" + all + " cats=" + (cats == null ? -1 : cats.length()) + " start=" + start);
+				activity.runOnUiThread(new Runnable() {
+					public void run() {
+						rd_jump(start);
+					}
+				});
+			} catch (Throwable t) {
+				i.syso("READER ! " + t);
+			}
+		}
+	}).start();
+}
+
+public int rd_pageAll() {
+	try {
+		Object o = ui_get("rd.pageAll");
+		if (o != null) {
+			return Integer.parseInt(String.valueOf(o));
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}
+
+public int rd_page() {
+	try {
+		Object o = ui_get("rd.page");
+		if (o != null) {
+			return Integer.parseInt(String.valueOf(o));
+		}
+	} catch (Throwable t) {
+	}
+	return 1;
+}
+
+public void rd_wire() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("net");
+	i.fn("store");
+}
+
+// 跳到指定页：缓存命中直接渲染，否则后台取该页所在段
+public void rd_jump(int p) {
+	rd_wire();
+	int all = rd_pageAll();
+	p = net_clampPage(p, all);
+	ui_reg("rd.page", String.valueOf(p));
+	rd_updateBar();
+
+	String surl = rd_surl();
+	JSONObject hit = null;
+	try {
+		i.fn("net");
+		hit = net_chunkLookup(surl, p);
+	} catch (Throwable t) {
+	}
+	ui_log("rd jump p=" + p + " all=" + all + " hit=" + (hit != null));
+	if (hit != null) {
+		rd_render(p, hit);
+		return;
+	}
+
+	rd_status("正在载入…");
+	int target = p;
+	new Thread(new Runnable() {
+		public void run() {
+			try {
+				i.fn("net");
+				JSONObject chunk = net_chunkAt(surl, target);
+				String e = chunk == null ? net_lastError() : "";
+				activity.runOnUiThread(new Runnable() {
+					public void run() {
+						if (chunk == null) {
+							i.syso("READER chunk ! p=" + target + " err=" + e);
+							rd_chunkFail(target, e);
+						} else {
+							rd_render(target, chunk);
+						}
+					}
+				});
+			} catch (Throwable t) {
+				i.syso("READER chunk ! " + t);
+			}
+		}
+	}).start();
+}
+
+// ---------- 渲染 ----------
+
+public WebView rd_wv() {
+	try {
+		return (WebView) ui_get("rd.wv");
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public void rd_status(String text) {
+	ui_log("rd status: " + text);
+	FrameLayout holder = (FrameLayout) ui_get("rd.holder");
+	if (holder == null) {
+		return;
+	}
+	holder.removeAllViews();
+	TextView t = ui_text(text, 15, th_ink2());
+	t.setGravity(Gravity.CENTER);
+	t.setPadding(ui_dp(24), 0, ui_dp(24), 0);
+	ui_fplace(holder, t, -1, -2, Gravity.CENTER);
+}
+
+public void rd_render(int p, JSONObject chunk) {
+	i.fn("store");
+	String html = null;
+	try {
+		i.fn("net");
+		html = net_pageHtml(chunk, p);
+	} catch (Throwable t) {
+	}
+	if (html == null || html.length() == 0) {
+		ui_log("rd render p=" + p + " html=null");
+		rd_status("这一页没有内容");
+		return;
+	}
+	ui_log("rd render p=" + p + " len=" + html.length());
+
+	FrameLayout holder = (FrameLayout) ui_get("rd.holder");
+	if (holder == null) {
+		return;
+	}
+	holder.removeAllViews();
+
+	WebView wv = new WebView(activity);
+	// 缩放与视口是 WebSettings 的能力，不是 WebView 的
+	WebSettings ws = wv.getSettings();
+	ws.setSupportZoom(false);
+	ws.setBuiltInZoomControls(false);
+	ws.setDisplayZoomControls(false);
+	ws.setUseWideViewPort(false);
+	ws.setLoadWithOverviewMode(false);
+	wv.setHorizontalScrollBarEnabled(false);
+	wv.setVerticalScrollBarEnabled(false);
+	// 长按保持系统默认行为（可选文字、可复制），不做拦截
+	wv.setOverScrollMode(View.OVER_SCROLL_NEVER);
+	wv.setBackgroundColor(ui_color(th_reader_bg(st_readerBg())));
+	// 轻点正文切换底栏：监听器恒返回 false —— 滚动、选字、长按复制仍是系统默认行为，
+	// 这里只旁听「按下→抬起」的落点与耗时，不消费任何事件
+	// 滚动与底栏的约定：平时一滚就收起；进了「触底区」底栏恒显示，
+	// 回到上面再滚才继续收起。y==oldY 的回调是布局引起的，不是用户滚动，直接忽略
+	wv.setOnScrollChangeListener(new View.OnScrollChangeListener() {
+		public void onScrollChange(View v, int x, int y, int oldX, int oldY) {
+			if (y == oldY) {
+				return;
+			}
+			if (rd_nearEnd()) {
+				if (!rd_barOn()) {
+					rd_barShow(true);
+				}
+				return;
+			}
+			if (rd_barOn()) {
+				rd_barShow(false);
+			}
+		}
+	});
+	wv.setOnTouchListener(new View.OnTouchListener() {
+		public boolean onTouch(View v, MotionEvent e) {
+			try {
+				int a = e.getActionMasked();
+				// 0=ACTION_DOWN 1=ACTION_UP：用字面量，避免 BeanShell 解析 framework 静态常量
+				if (a == 0) {
+					i.sss("rd.tx", Float.valueOf(e.getX()));
+					i.sss("rd.ty", Float.valueOf(e.getY()));
+					i.sss("rd.tt", Long.valueOf(System.currentTimeMillis()));
+				} else if (a == 1) {
+					Object ox = i.sss("rd.tx");
+					Object oy = i.sss("rd.ty");
+					Object ot = i.sss("rd.tt");
+					if (ox == null || oy == null || ot == null) {
+						return false;
+					}
+					float dx = Math.abs(e.getX() - ((Number) ox).floatValue());
+					float dy = Math.abs(e.getY() - ((Number) oy).floatValue());
+					long ms = System.currentTimeMillis() - ((Number) ot).longValue();
+					if (dx < ui_dp(8) && dy < ui_dp(8) && ms < 300) {
+						rd_barToggle();
+					}
+				}
+			} catch (Throwable t) {
+				ui_log("rd tap " + t);
+			}
+			return false;
+		}
+	});
+	ui_fplace(holder, wv, -1, -1, Gravity.TOP | Gravity.LEFT);
+	ui_reg("rd.wv", wv);
+
+	int bgIdx = st_readerBg();
+	// 阅读底色 3 = 夜色，状态栏图标要转白
+	ui_statusIcons(bgIdx != 3);
+	wv.loadDataWithBaseURL("https://gede.5read.com/", rd_html(html, bgIdx), "text/html", "UTF-8", null);
+
+	rd_saveProgress();
+	rd_updateBar();
+}
+
+public String rd_html(String body, int bgIdx) {
+	i.fn("store");
+	int fs = 17;
+	int f = st_readerFont();
+	if (f == 0) {
+		fs = 15;
+	}
+	if (f == 2) {
+		fs = 20;
+	}
+	String ls = "0";
+	if (st_readerLetter() == 1) {
+		ls = "0.02em";
+	}
+	if (st_readerLetter() == 2) {
+		ls = "0.05em";
+	}
+	String lh = "1.7";
+	if (st_readerLine() == 0) {
+		lh = "1.6";
+	}
+	if (st_readerLine() == 2) {
+		lh = "1.9";
+	}
+	String bg = th_reader_bg(bgIdx);
+	String ink = th_reader_ink(bgIdx);
+
+	StringBuilder sb = new StringBuilder();
+	sb.append("<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+	sb.append("<style>");
+	sb.append("html,body{margin:0;padding:0;background:").append(bg).append(";color:").append(ink).append(";}");
+	sb.append("body{font-size:").append(fs).append("px;line-height:").append(lh);
+	sb.append(";letter-spacing:").append(ls);
+	// 底边距要盖住底栏（48dp）还留口气：底栏浮在正文上，最后一行不能被它压住
+	sb.append(";padding:10px 18px 76px 18px;overflow-x:hidden;");
+	// 保留文字可选：长按能选中、系统菜单能复制（默认行为，不覆盖）
+	sb.append("-webkit-user-select:text;user-select:text;}");
+	sb.append("p{margin:0 0 .6em 0;text-align:justify;text-justify:inter-ideograph;}");
+	sb.append("img{max-width:100%!important;height:auto!important;display:block;margin:8px auto;}");
+	sb.append("</style></head><body>");
+	sb.append(body);
+	sb.append("</body></html>");
+	return sb.toString();
+}
+
+// ---------- 底栏 ----------
+
+public LinearLayout rd_bar() {
+	// 底栏跟随「阅读底色」而不是 App 主题：夜间读书时底栏不该还亮着纸白
+	int bgIdx = st_readerBg();
+	LinearLayout bar = ui_row();
+	bar.setGravity(Gravity.CENTER_VERTICAL);
+	bar.setBackgroundColor(ui_color(th_reader_bg(bgIdx)));
+
+	View tocBtn = rd_barIcon("toc", new Runnable() {
+		public void run() {
+			rd_openToc();
+		}
+	});
+	ui_reg("rd.toc", tocBtn);
+	bar.addView(tocBtn);
+
+	View prevBtn = rd_barText("上一页", new Runnable() {
+		public void run() {
+			rd_prev();
+		}
+	});
+	ui_reg("rd.prev", prevBtn);
+	bar.addView(prevBtn, new LinearLayout.LayoutParams(-2, -1));
+
+	TextView idx = ui_text("1 / 1", 13, th_reader_ink2(bgIdx));
+	idx.setGravity(Gravity.CENTER);
+	ui_reg("rd.idx", idx);
+	bar.addView(idx, new LinearLayout.LayoutParams(0, -1, 1f));
+
+	View nextBtn = rd_barText("下一页", new Runnable() {
+		public void run() {
+			rd_next();
+		}
+	});
+	ui_reg("rd.next", nextBtn);
+	bar.addView(nextBtn, new LinearLayout.LayoutParams(-2, -1));
+
+	TextView aa = ui_text("Aa", 15, th_reader_ink(bgIdx));
+	aa.setGravity(Gravity.CENTER);
+	aa.setLayoutParams(new LinearLayout.LayoutParams(ui_dp(48), -1));
+	wg_ripple(aa, 0, false);
+	aa.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			rd_panel(!rd_panelOpen());
+		}
+	});
+	ui_reg("rd.aa", aa);
+	bar.addView(aa);
+	return bar;
+}
+
+// 目录 / 翻页 / 外观在正文就绪前一律置灰不可点
+public void rd_enable(String name, boolean on) {
+	try {
+		View v = (View) ui_get(name);
+		if (v == null) {
+			return;
+		}
+		v.setEnabled(on);
+		v.setAlpha(on ? 1f : 0.3f);
+	} catch (Throwable t) {
+	}
+}
+
+public boolean rd_hasCats() {
+	try {
+		Object o = ui_get("rd.cats");
+		if (o == null) {
+			return false;
+		}
+		return new JSONArray(String.valueOf(o)).length() > 0;
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+public View rd_barIcon(String icon, Runnable run) {
+	View v = wg_iconButton(icon, 24, th_reader_ink(st_readerBg()), 48, run);
+	return v;
+}
+
+public View rd_barText(String label, Runnable run) {
+	TextView t = ui_text(label, 15, th_reader_ink(st_readerBg()));
+	t.setGravity(Gravity.CENTER);
+	t.setPadding(ui_dp(12), 0, ui_dp(12), 0);
+	t.setLayoutParams(new LinearLayout.LayoutParams(-2, -1));
+	wg_ripple(t, 0, false);
+	Runnable r = run;
+	t.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			r.run();
+		}
+	});
+	return t;
+}
+
+// 换底色后重建底栏：图标是现画的位图，颜色已经烤进 Bitmap，改色只能重建
+public void rd_barApply() {
+	try {
+		LinearLayout bar = (LinearLayout) ui_get("rd.bar");
+		if (bar == null) {
+			return;
+		}
+		ViewGroup parent = (ViewGroup) bar.getParent();
+		if (parent == null) {
+			return;
+		}
+		boolean on = rd_barOn();
+		parent.removeView(bar);
+		LinearLayout nb = rd_bar();
+		ui_reg("rd.bar", nb);
+		parent.addView(nb, new FrameLayout.LayoutParams(-1, ui_dp(48), Gravity.BOTTOM));
+		rd_updateBar();
+		// 换底色不该顺手把底栏弹出来：沿用当前显隐
+		if (on) {
+			nb.setVisibility(View.VISIBLE);
+			nb.setAlpha(1f);
+		} else {
+			nb.setVisibility(View.GONE);
+		}
+	} catch (Throwable t) {
+		ui_log("rd_barApply " + t);
+	}
+}
+
+// ---------- 底栏显隐 ----------
+// 阅读时正文优先：底栏默认藏起来，点一下正文交替显示（图标现画成位图，颜色改不了，只切可见性）
+
+public boolean rd_barOn() {
+	try {
+		Object o = i.sss("rd.barOn");
+		return o != null && "1".equals(String.valueOf(o));
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+public void rd_barShow(boolean on) {
+	try {
+		i.sss("rd.barOn", on ? "1" : "0");
+		LinearLayout bar = (LinearLayout) ui_get("rd.bar");
+		if (bar == null) {
+			return;
+		}
+		if (on) {
+			bar.setVisibility(View.VISIBLE);
+			bar.setAlpha(0f);
+			bar.animate().alpha(1f).setDuration(160).start();
+		} else {
+			bar.setVisibility(View.GONE);
+		}
+	} catch (Throwable t) {
+		ui_log("rd barShow " + t);
+	}
+}
+
+public void rd_barToggle() {
+	rd_barShow(!rd_barOn());
+}
+
+public void rd_updateBar() {
+	int all = rd_pageAll();
+	int p = rd_page();
+	TextView idx = (TextView) ui_get("rd.idx");
+	if (idx != null) {
+		// 总页数还没回来时不显示「1 / 0」，用破折号占位
+		idx.setText(all > 0 ? (p + " / " + all) : "—");
+	}
+	// 正文没就绪（还在请求 / 目录没回来 / 页码未知）时，底栏一律不可用
+	boolean ready = all > 0;
+	rd_enable("rd.prev", ready && p > 1);
+	rd_enable("rd.next", ready && p < all);
+	rd_enable("rd.toc", ready && rd_hasCats());
+	rd_enable("rd.aa", ready);
+}
+
+// 触底区宽度：距正文末尾这么近就算「读到底了」，底栏在这个区域里恒显示
+public int rd_endZone() {
+	return ui_dp(120);
+}
+
+// 是否已进入触底区（含正文不满一屏、压根没得滚的情况由调用方按 y==oldY 过滤）
+public boolean rd_nearEnd() {
+	WebView wv = rd_wv();
+	if (wv == null) {
+		return false;
+	}
+	try {
+		int y = wv.getScrollY();
+		int vh = wv.getHeight();
+		int ch = (int) (wv.getContentHeight() * wv.getScale());
+		return ch > 0 && y + vh >= ch - rd_endZone();
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+public void rd_next() {
+	int all = rd_pageAll();
+	int p = rd_page();
+	if (p >= all) {
+		return;
+	}
+	rd_jump(p + 1);
+}
+
+public void rd_prev() {
+	int p = rd_page();
+	if (p <= 1) {
+		return;
+	}
+	rd_jump(p - 1);
+}
+
+// ---------- 进度 ----------
+
+public void rd_saveProgress() {
+	try {
+		i.fn("store");
+		Object t = ui_get("rd.title");
+		Object au = ui_get("rd.author");
+		st_progressSave(rd_surl(), rd_page(), rd_pageAll(),
+				t == null ? "" : String.valueOf(t),
+				au == null ? "" : String.valueOf(au));
+	} catch (Throwable t) {
+	}
+}
+
+// ---------- 目录 ----------
+
+public void rd_openToc() {
+	try {
+		rd_panel(false);
+		i.fn("toc");
+		toc_open();
+	} catch (Throwable t) {
+		ui_log("toc open " + t);
+	}
+}
+
+// ---------- 外观面板：交给 Material 的 BottomSheetDialog ----------
+// 拖动关闭（内容区任意位置）、遮罩、收起动画、返回键、窗口层级都由 BottomSheetBehavior 负责，
+// 不再自己写触摸跟踪。
+
+public BottomSheetDialog rd_sheet() {
+	try {
+		return (BottomSheetDialog) ui_get("rd.sheet");
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public boolean rd_panelOpen() {
+	BottomSheetDialog d = rd_sheet();
+	return d != null && d.isShowing();
+}
+
+public void rd_panel(boolean show) {
+	rd_wire();
+	if (show) {
+		rd_sheetShow();
+		return;
+	}
+	BottomSheetDialog d = rd_sheet();
+	if (d != null) {
+		d.dismiss();
+	}
+}
+
+public void rd_sheetShow() {
+	BottomSheetDialog cur = rd_sheet();
+	if (cur != null && cur.isShowing()) {
+		return;
+	}
+	// 每次新开：ui_reg 的句柄跨页面存活，复用上一页的 dialog 会绑在旧 Activity 上
+	BottomSheetDialog d = new BottomSheetDialog(activity);
+	ui_reg("rd.sheet", d);
+	d.setContentView(rd_sheetContent());
+	rd_sheetTint(d);
+	d.show();
+}
+
+// dialog 自带白底，换成纸色；容器 id 用 getIdentifier 取，避免在 BeanShell 里引用 R 类
+public void rd_sheetTint(BottomSheetDialog d) {
+	try {
+		int id = activity.getResources().getIdentifier("design_bottom_sheet", "id", "com.google.android.material");
+		if (id <= 0) {
+			ui_log("sheet tint: id not found");
+			return;
+		}
+		View v = d.findViewById(id);
+		if (v != null) {
+			v.setBackground(rd_sheetBg());
+		}
+	} catch (Throwable t) {
+		ui_log("sheet tint " + t);
+	}
+}
+
+public LinearLayout rd_sheetContent() {
+	LinearLayout panel = ui_col();
+	panel.setOrientation(LinearLayout.VERTICAL);
+	panel.setPadding(ui_dp(20), ui_dp(8), ui_dp(20), ui_dp(20));
+
+	// 抓手只是视觉暗示；拖动由 BottomSheetBehavior 实现
+	LinearLayout grab = new LinearLayout(activity);
+	grab.setOrientation(LinearLayout.HORIZONTAL);
+	grab.setGravity(Gravity.CENTER);
+	grab.setLayoutParams(new LinearLayout.LayoutParams(-1, ui_dp(16)));
+	View bar = new View(activity);
+	GradientDrawable gd = new GradientDrawable();
+	gd.setColor(ui_color(th_placeholder()));
+	gd.setCornerRadius(ui_dp(2));
+	bar.setBackground(gd);
+	grab.addView(bar, new LinearLayout.LayoutParams(ui_dp(36), ui_dp(4)));
+	panel.addView(grab);
+
+	panel.addView(rd_panelRow("背景", 4, st_readerBg(), 0));
+	panel.addView(rd_panelRow("字号", 3, st_readerFont(), 1));
+	panel.addView(rd_panelRow("字距", 3, st_readerLetter(), 2));
+	panel.addView(rd_panelRow("行距", 3, st_readerLine(), 3));
+	return panel;
+}
+
+public GradientDrawable rd_sheetBg() {
+	GradientDrawable d = new GradientDrawable();
+	d.setColor(ui_color(th_surface()));
+	float r = (float) ui_dp(20);
+	float z = 0f;
+	d.setCornerRadii(new float[] {r, r, r, r, z, z, z, z});
+	return d;
+}
+
+// 每行选项的视图句柄，改选项时只换被点中与被取消的两个背景，不重建整块
+public ArrayList rd_chips(int kind) {
+	Object o = i.sss("rd.chips." + kind);
+	if (o == null) {
+		o = new ArrayList();
+		i.sss("rd.chips." + kind, o);
+	}
+	return (ArrayList) o;
+}
+
+public void rd_chipStyle(int kind, int idx, boolean on) {
+	try {
+		ArrayList l = rd_chips(kind);
+		if (idx < 0 || idx >= l.size()) {
+			return;
+		}
+		TextView c = (TextView) l.get(idx);
+		c.setTextColor(ui_color(on ? th_bg() : th_ink1()));
+		if (on) {
+			wg_rippleFill(c, 20, th_ink1(), false);
+		} else {
+			wg_ripple(c, 20, false);
+		}
+	} catch (Throwable t) {
+	}
+}
+
+public LinearLayout rd_panelRow(String label, int count, int cur, int kind) {
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+
+	TextView t = ui_text(label, 13, th_ink2());
+	row.addView(t, new LinearLayout.LayoutParams(ui_dp(48), -2));
+
+	rd_chips(kind).clear();
+	for (int k = 0; k < count; k++) {
+		row.addView(rd_chip(k, cur == k, kind));
+	}
+	LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+	lp.topMargin = ui_dp(12);
+	row.setLayoutParams(lp);
+	return row;
+}
+
+public TextView rd_chip(int idx, boolean on, int kind) {
+	String label = "";
+	if (kind == 0) {
+		label = idx == 0 ? "纸" : idx == 1 ? "米" : idx == 2 ? "绿" : "夜";
+	} else {
+		label = idx == 0 ? "小" : idx == 1 ? "中" : "大";
+	}
+	TextView c = ui_text(label, 13, on ? th_bg() : th_ink1());
+	c.setGravity(Gravity.CENTER);
+	LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ui_dp(40), 1f);
+	lp.leftMargin = ui_dp(4);
+	lp.rightMargin = ui_dp(4);
+	c.setLayoutParams(lp);
+	if (on) {
+		wg_rippleFill(c, 20, th_ink1(), false);
+	} else {
+		wg_ripple(c, 20, false);
+	}
+
+	rd_chips(kind).add(c);
+
+	int picked = idx;
+	int k2 = kind;
+	c.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			rd_pick(k2, picked);
+		}
+	});
+	return c;
+}
+
+public void rd_pick(int kind, int idx) {
+	rd_wire();
+	int old = 0;
+	if (kind == 0) {
+		old = st_readerBg();
+		st_setInt("rd.bg", idx);
+		View bg = ui_layer("bg");
+		if (bg != null) {
+			bg.setBackgroundColor(ui_color(th_reader_bg(idx)));
+		}
+		ui_statusIcons(idx != 3);
+		rd_barApply();
+	} else if (kind == 1) {
+		old = st_readerFont();
+		st_setInt("rd.font", idx);
+	} else if (kind == 2) {
+		old = st_readerLetter();
+		st_setInt("rd.letter", idx);
+	} else {
+		old = st_readerLine();
+		st_setInt("rd.line", idx);
+	}
+
+	rd_chipStyle(kind, old, false);
+	rd_chipStyle(kind, idx, true);
+	rd_jump(rd_page());
+}

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>书架网格排版对照 · 简阅</title>
+<style>
+  :root{
+    --bg:#F7F4EE; --surface:#FFFDF8; --ink1:#1C1A17; --ink2:#6B6459;
+    --hairline:#E4DED2; --accent:#A6402D; --placeholder:#EDE8DD;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:#EFEBE3; color:var(--ink1);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+    padding:40px 24px 64px;
+  }
+  .head{max-width:1560px;margin:0 auto 28px;}
+  .head h1{font-size:22px;font-weight:500;margin:0 0 6px;letter-spacing:.02em;}
+  .head p{margin:0;color:var(--ink2);font-size:13px;line-height:1.7;}
+  .board{display:flex;gap:28px;justify-content:center;align-items:flex-start;flex-wrap:wrap;max-width:1560px;margin:0 auto;}
+  .col{width:352px;}
+  .col > .label{margin-bottom:10px;}
+  .col .no{font-size:12px;color:var(--accent);letter-spacing:.08em;}
+  .col .name{font-size:15px;font-weight:500;margin-top:2px;}
+  .col .desc{font-size:12px;color:var(--ink2);margin-top:4px;line-height:1.6;min-height:38px;}
+  .phone{
+    background:var(--bg); border-radius:14px; overflow:hidden;
+    box-shadow:0 1px 2px rgba(28,26,23,.06), 0 8px 24px rgba(28,26,23,.06);
+    border:1px solid rgba(28,26,23,.06);
+  }
+  .topbar{display:flex;align-items:center;gap:8px;padding:14px 16px 10px;}
+  .topbar .back{width:24px;height:24px;color:var(--ink1);}
+  .topbar .t{font-size:17px;}
+  .cats{display:flex;gap:24px;padding:6px 16px 0;overflow:hidden;border-bottom:1px solid var(--hairline);}
+  .cat{font-size:15px;color:var(--ink2);padding-bottom:8px;white-space:nowrap;}
+  .cat.on{color:var(--accent);font-weight:500;border-bottom:2px solid var(--accent);margin-bottom:-1px;}
+  .grid{
+    display:grid; grid-template-columns:repeat(3,1fr);
+    column-gap:12px; row-gap:24px;
+    padding:12px 16px 28px;
+  }
+  .cell{display:flex;flex-direction:column;position:relative;}
+  .cover{
+    width:100%; aspect-ratio:2/3; border-radius:2px;
+    display:flex;align-items:center;justify-content:center;
+    text-align:center; font-size:11px; line-height:1.5;
+    color:rgba(28,26,23,.72); padding:10px; font-weight:500;
+    letter-spacing:.02em;
+  }
+  .title{
+    font-size:13px; line-height:1.4; margin-top:8px;
+    overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+  }
+  .author{font-size:13px; color:var(--ink2); line-height:1.4; margin-top:2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+
+  /* 变体 1：现状 —— 标题随内容收缩 */
+  .v1 .title{ -webkit-line-clamp:2; }
+
+  /* 变体 2：标题固定两行 + 作者贴底 */
+  .v2 .cell{min-height:100%;}
+  .v2 .title{min-height:calc(13px*1.4*2);}
+  .v2 .author{margin-top:auto;}
+
+  /* 变体 3：标题固定两行并垂直居中 */
+  .v3 .title{min-height:calc(13px*1.4*2); display:flex; align-items:center;}
+
+  /* 变体 4：网格内不显示作者，标题固定两行 */
+  .v4 .title{min-height:calc(13px*1.4*2);}
+
+  /* 用内阴影在作者行上方画一条参考线，不影响布局 */
+  .author{box-shadow:inset 0 1px 0 rgba(166,64,45,.28);}
+  .v4 .title{box-shadow:inset 0 1px 0 rgba(166,64,45,.28);}
+  .tip{margin-top:12px;font-size:12px;color:var(--ink2);line-height:1.7;}
+  .tip b{color:var(--ink1);font-weight:500;}
+  .badge{display:inline-block;font-size:11px;color:var(--accent);border:1px solid rgba(166,64,45,.35);
+    border-radius:10px;padding:1px 8px;margin-left:6px;vertical-align:2px;}
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>书架网格排版对照</h1>
+  <p>同一批书名、同样的三列网格，只改文字块的处理方式。红色虚线标出「作者行基线」的位置，用来观察三列是否对齐。</p>
+</div>
+
+<div class="board">
+
+  <!-- 1 现状 -->
+  <div class="col">
+    <div class="label">
+      <div class="no">现状</div>
+      <div class="name">随内容收缩</div>
+      <div class="desc">不固定高度。行高由最高的一格决定，短书名格子的作者行悬在半空。</div>
+    </div>
+    <div class="phone" id="p1"></div>
+    <div class="tip">问题：同一行里作者行的位置不一样，扫过去是 <b>参差</b> 的。</div>
+  </div>
+
+  <!-- 2 固定两行 + 作者贴底 -->
+  <div class="col">
+    <div class="label">
+      <div class="no">方案 ①</div>
+      <div class="name">标题固定两行 · 作者贴底</div>
+      <div class="desc">标题盒恒定两行，作者永远贴格子底部。空隙落在书名下方，三列作者基线对齐。</div>
+    </div>
+    <div class="phone" id="p2"></div>
+    <div class="tip">代价：单行书名的格子中间有约一行（18px）的空白。<span class="badge">主流做法</span></div>
+  </div>
+
+  <!-- 3 标题垂直居中 -->
+  <div class="col">
+    <div class="label">
+      <div class="no">方案 ②</div>
+      <div class="name">标题固定两行 · 垂直居中</div>
+      <div class="desc">空隙分到书名上下各半行，断裂感弱一些。</div>
+    </div>
+    <div class="phone" id="p3"></div>
+    <div class="tip">代价：书名的起始线参差，同一行里有的从第一行开始，有的从第二行开始。</div>
+  </div>
+
+  <!-- 4 不显示作者 -->
+  <div class="col">
+    <div class="label">
+      <div class="no">方案 ③</div>
+      <div class="name">网格不放作者</div>
+      <div class="desc">只留封面 + 固定两行书名。参差从根上消失，作者信息进详情页。</div>
+    </div>
+    <div class="phone" id="p4"></div>
+    <div class="tip">代价：丢掉「同一作者的书」这类浏览路径，但网格节奏最干净。<span class="badge">最简约</span></div>
+  </div>
+
+</div>
+
+<script>
+const BOOKS = [
+  {t:"世界上最疼我的那个人去了", a:"张洁 著", c:"#C9B7D8"},
+  {t:"飞鸟集  新月集",            a:"（印）泰戈尔 著", c:"#8FB8C9"},
+  {t:"飞鸟集  新月集",            a:"（印）泰戈尔 著", c:"#E3C9C9"},
+  {t:"余光中散文",                a:"余光中 著", c:"#E8DCC4"},
+  {t:"风起林涛  保德新青年文选",   a:"保德新", c:"#A9C6D6"},
+  {t:"孩子与世界",                a:"徐社东 著", c:"#E4D07A"}
+];
+
+function build(id, variant, withAuthor){
+  const root = document.getElementById(id);
+  root.innerHTML = `
+    <div class="topbar">
+      <svg class="back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+      <div class="t">图书</div>
+    </div>
+    <div class="cats">
+      <div class="cat on">诗歌散文</div><div class="cat">小说传记</div>
+      <div class="cat">科学技术</div><div class="cat">国学经典</div>
+    </div>
+    <div class="grid ${variant}"></div>`;
+
+  const grid = root.querySelector(".grid");
+  BOOKS.forEach((b, i) => {
+    const cell = document.createElement("div");
+    cell.className = "cell";
+    cell.innerHTML = `
+      <div class="cover" style="background:linear-gradient(160deg, ${b.c}, ${shade(b.c)})">${b.t}</div>
+      <div class="title">${b.t}</div>
+      ${withAuthor ? `<div class="author">${b.a}</div>` : ""}
+    `;
+    grid.appendChild(cell);
+  });
+  return root;
+}
+
+function shade(hex){
+  const n = parseInt(hex.slice(1),16);
+  const r = Math.max(0,(n>>16)-28), g = Math.max(0,((n>>8)&255)-28), b = Math.max(0,(n&255)-28);
+  return `rgb(${r},${g},${b})`;
+}
+
+build("p1","v1",true);
+build("p2","v2",true);
+build("p3","v3",true);
+build("p4","v4",false);
+</script>
+
+</body>
+</html>

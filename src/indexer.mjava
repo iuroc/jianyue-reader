@@ -1,0 +1,569 @@
+// 本地索引：按分类分片抓全量目录，4 线程并发，每片完成即落盘；支持断点续建。
+// 索引完成后合并成单文件，搜索是内存里的子串匹配，不需要分词。
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+// ---------- 目录与状态 ----------
+
+public File ix_dir() {
+	File d = new File(activity.getFilesDir(), "jianyue/index");
+	if (!d.exists()) {
+		d.mkdirs();
+	}
+	return d;
+}
+
+// 建库期间一律写 tmp/，全部成功后才整体替换正式目录：
+// 中途失败 / 断网时旧库原样可用，不会出现「半新半旧」的库
+public File ix_tmpDir() {
+	File d = new File(ix_dir(), "tmp");
+	if (!d.exists()) {
+		d.mkdirs();
+	}
+	return d;
+}
+
+public String[] ix_catSpec() {
+	// 12 个图书分类（123 无数据，已排除）+ 7 个期刊分类
+	return new String[] {
+		"b:124", "b:125", "b:126", "b:127", "b:128", "b:129",
+		"b:130", "b:131", "b:132", "b:140", "b:141",
+		"m:6", "m:3", "m:4", "m:5", "m:8", "m:9", "m:10"
+	};
+}
+
+public int ix_total() {
+	return 18;
+}
+
+public String ix_stateRead() {
+	try {
+		File f = new File(ix_tmpDir(), "state.json");
+		if (!f.exists()) {
+			return "{\"done\":[]}";
+		}
+		FileInputStream in = new FileInputStream(f);
+		BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+		StringBuilder sb = new StringBuilder();
+		String line = r.readLine();
+		while (line != null) {
+			sb.append(line);
+			line = r.readLine();
+		}
+		r.close();
+		return sb.toString();
+	} catch (Throwable t) {
+		return "{\"done\":[]}";
+	}
+}
+
+public void ix_stateWrite(String s) {
+	try {
+		FileOutputStream o = new FileOutputStream(new File(ix_tmpDir(), "state.json"));
+		o.write(s.getBytes("UTF-8"));
+		o.flush();
+		o.close();
+	} catch (Throwable t) {
+		i.syso("IX state ! " + t);
+	}
+}
+
+public boolean ix_done(String spec) {
+	try {
+		JSONObject st = new JSONObject(ix_stateRead());
+		JSONArray arr = st.optJSONArray("done");
+		if (arr == null) {
+			return false;
+		}
+		String tag = spec.replace(":", "_");
+		for (int k = 0; k < arr.length(); k++) {
+			if (tag.equals(arr.optString(k, ""))) {
+				return true;
+			}
+		}
+	} catch (Throwable t) {
+	}
+	return false;
+}
+
+public void ix_markDone(String spec) {
+	try {
+		String tag = spec.replace(":", "_");
+		JSONObject st = new JSONObject(ix_stateRead());
+		JSONArray arr = st.optJSONArray("done");
+		JSONArray out = new JSONArray();
+		boolean has = false;
+		if (arr != null) {
+			for (int k = 0; k < arr.length(); k++) {
+				String v = arr.optString(k, "");
+				out.put(v);
+				if (v.equals(tag)) {
+					has = true;
+				}
+			}
+		}
+		if (!has) {
+			out.put(tag);
+		}
+		JSONObject nw = new JSONObject();
+		nw.put("done", out);
+		nw.put("total", ix_total());
+		ix_stateWrite(nw.toString());
+	} catch (Throwable t) {
+		i.syso("IX mark ! " + t);
+	}
+}
+
+public int ix_doneCount() {
+	try {
+		JSONObject st = new JSONObject(ix_stateRead());
+		JSONArray arr = st.optJSONArray("done");
+		return arr == null ? 0 : arr.length();
+	} catch (Throwable t) {
+		return 0;
+	}
+}
+
+// 索引 / 书刊库格式版本：字段或布局变了就升版本，旧数据自动作废重建
+public String ix_ver() {
+	return "3";
+}
+
+// ---------- 本地书刊库（全字段） ----------
+
+// 读：正式库（只有提交后才有内容）
+public File ix_lib(String spec) {
+	return new File(ix_dir(), "lib_" + spec.replace(":", "_") + ".json");
+}
+
+// 写：暂存库
+public File ix_libTmp(String spec) {
+	return new File(ix_tmpDir(), "lib_" + spec.replace(":", "_") + ".json");
+}
+
+public String ix_readFile(File f) {
+	FileInputStream in = new FileInputStream(f);
+	BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+	StringBuilder sb = new StringBuilder();
+	String line = r.readLine();
+	while (line != null) {
+		sb.append(line);
+		line = r.readLine();
+	}
+	r.close();
+	return sb.toString();
+}
+
+// 取整个分类的全部记录（全字段）；分类文件不存在返回 null
+public JSONArray ix_libAll(String spec) {
+	try {
+		// 不能用 i.sss 做内存缓存：调用方常在后台线程，那里的静态表是 null（Hashtable.put on null）
+		File f = ix_lib(spec);
+		if (!f.exists() || f.length() == 0) {
+			return null;
+		}
+		return new JSONArray(ix_readFile(f));
+	} catch (Throwable t) {
+		i.syso("IX libAll ! " + t);
+		return null;
+	}
+}
+
+// 本地分页：从整分类里切出第 page 页（页号从 1 开始）
+public JSONArray ix_libPage(String spec, int page, int size) {
+	JSONArray all = ix_libAll(spec);
+	if (all == null) {
+		return null;
+	}
+	int from = (page - 1) * size;
+	if (from < 0) {
+		from = 0;
+	}
+	JSONArray out = new JSONArray();
+	int end = from + size;
+	if (end > all.length()) {
+		end = all.length();
+	}
+	for (int k = from; k < end; k++) {
+		out.put(all.opt(k));
+	}
+	return out;
+}
+
+// 在本地库里按 surl（图书）或 id（期刊）找完整记录
+public JSONObject ix_libFind(String spec, String surl, int id) {
+	JSONArray all = ix_libAll(spec);
+	if (all == null) {
+		return null;
+	}
+	for (int k = 0; k < all.length(); k++) {
+		JSONObject o = all.optJSONObject(k);
+		if (o == null) {
+			continue;
+		}
+		if (surl != null && surl.length() > 0 && surl.equals(o.optString("surl", ""))) {
+			return o;
+		}
+		if (id > 0 && o.optInt("id", 0) == id) {
+			return o;
+		}
+	}
+	return null;
+}
+
+public boolean ix_verOk() {
+	try {
+		File f = new File(ix_dir(), "ver.txt");
+		if (!f.exists()) {
+			return false;
+		}
+		FileInputStream in = new FileInputStream(f);
+		BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+		String line = r.readLine();
+		r.close();
+		return line != null && ix_ver().equals(line.trim());
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+public void ix_verWrite() {
+	try {
+		FileOutputStream o = new FileOutputStream(new File(ix_dir(), "ver.txt"));
+		o.write(ix_ver().getBytes("UTF-8"));
+		o.flush();
+		o.close();
+	} catch (Throwable t) {
+		i.syso("IX ver ! " + t);
+	}
+}
+
+public boolean ix_ready() {
+	File f = new File(ix_dir(), "index.json");
+	return f.exists() && f.length() > 0 && ix_verOk();
+}
+
+// ---------- 抓取 ----------
+
+// 抓取产物落 tmp/
+public File ix_shard(String spec) {
+	return new File(ix_tmpDir(), "idx_" + spec.replace(":", "_") + ".json");
+}
+
+public void ix_fetchOne(String spec) {
+	String[] parts = spec.split(":");
+	boolean isMag = "m".equals(parts[0]);
+	int cataid = Integer.parseInt(parts[1]);
+
+	i.fn("net");
+	JSONArray arr = null;
+	if (isMag) {
+		JSONObject d = net_magazines(cataid, 1, -1);
+		JSONObject msg = net_msg(d);
+		arr = msg == null ? null : msg.optJSONArray("list");
+	} else {
+		JSONObject d = net_books(cataid, 1, -1);
+		JSONObject msg = net_msg(d);
+		arr = msg == null ? null : msg.optJSONArray("list");
+	}
+	if (arr == null) {
+		i.syso("IX fail " + spec);
+		return;
+	}
+
+	// 全字段落盘 = 本地书刊库：分类列表、详情都直接读它，不再回服务器
+	try {
+		FileOutputStream lo = new FileOutputStream(ix_libTmp(spec));
+		lo.write(arr.toString().getBytes("UTF-8"));
+		lo.flush();
+		lo.close();
+	} catch (Throwable t) {
+		i.syso("IX lib ! " + t);
+	}
+
+	JSONArray out = new JSONArray();
+	for (int k = 0; k < arr.length(); k++) {
+		JSONObject o = arr.optJSONObject(k);
+		if (o == null) {
+			continue;
+		}
+		try {
+			JSONObject r = new JSONObject();
+			r.put("k", isMag ? "m" : "b");
+			r.put("t", isMag ? o.optString("name", "") : o.optString("title", ""));
+			r.put("a", isMag ? o.optString("ISSN", "") : o.optString("author", ""));
+			String cover = isMag ? o.optString("coverPath", "") : o.optString("cover", "");
+			if (cover.length() == 0 && !isMag) {
+				cover = o.optString("bcover", "");
+			}
+			r.put("c", cover);
+			r.put("s", o.optString("surl", ""));
+			r.put("id", o.optInt("id", 0));
+			// 记下所属分类：搜索结果点进详情时，按这个标记去本地库取完整记录
+			r.put("sp", spec.replace(":", "_"));
+			out.put(r);
+		} catch (Throwable t) {
+		}
+	}
+
+	try {
+		FileOutputStream o2 = new FileOutputStream(ix_shard(spec));
+		o2.write(out.toString().getBytes("UTF-8"));
+		o2.flush();
+		o2.close();
+		ix_markDone(spec);
+		i.syso("IX shard " + spec + " n=" + out.length());
+	} catch (Throwable t) {
+		i.syso("IX write ! " + t);
+	}
+}
+
+// ---------- 构建 ----------
+
+public int ix_running() {
+	try {
+		Object o = i.sss("ix.running");
+		if (o != null && "1".equals(String.valueOf(o))) {
+			return 1;
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}
+
+// 清空本地索引（state.json / idx_*.json / index.json），下次进搜索页从头重建
+public void ix_start() {
+	ix_start(false);
+}
+
+// force=true：已有旧库也要重建（「我的 → 重建索引」）
+public void ix_start(boolean force) {
+	if (ix_running() == 1) {
+		return;
+	}
+	if (!force && ix_ready()) {
+		return;
+	}
+	// 旧格式：只清暂存区，重建成功后提交时才替换正式库
+	if (!ix_verOk()) {
+		ix_resetTmp();
+	}
+	i.sss("ix.running", "1");
+	i.syso("IX start total=" + ix_total());
+
+	AtomicInteger left = new AtomicInteger(ix_total());
+	i.sss("ix.left", left);
+
+	ExecutorService pool = Executors.newFixedThreadPool(4);
+	i.sss("ix.pool", pool);
+
+	String[] specs = ix_catSpec();
+	int submitted = 0;
+	for (int k = 0; k < specs.length; k++) {
+		if (ix_done(specs[k])) {
+			left.decrementAndGet();
+			continue;
+		}
+		String spec = specs[k];
+		pool.submit(new Runnable() {
+			public void run() {
+				try {
+					i.fn("indexer");
+					i.fn("net");
+					ix_fetchOne(spec);
+				} catch (Throwable t) {
+					i.syso("IX task ! " + t);
+				}
+				int now = left.decrementAndGet();
+				if (now <= 0) {
+					// 收尾要在 UI 线程做：ix_finish 里要写 i.sss，而工作线程的静态表是 null
+					activity.runOnUiThread(new Runnable() {
+						public void run() {
+							ix_finish();
+						}
+					});
+				}
+			}
+		});
+		submitted++;
+	}
+
+	if (left.get() <= 0) {
+		ix_finish();
+	}
+	i.syso("IX submitted=" + submitted);
+}
+
+// 收尾 = 提交：先把 tmp 里的产物全部核对齐，再逐个换到正式目录。
+// 任何一步不完整就放弃提交，正式库保持原样（旧缓存继续可用）。
+public void ix_finish() {
+	try {
+		i.sss("ix.running", "0");
+		ExecutorService pool = null;
+		try {
+			pool = (ExecutorService) i.sss("ix.pool");
+		} catch (Throwable t) {
+		}
+		if (pool != null) {
+			pool.shutdown();
+		}
+
+		String[] specs = ix_catSpec();
+		// 1. 每个分类都必须有 tmp 产物，缺一个就不提交
+		JSONArray all = new JSONArray();
+		for (int k = 0; k < specs.length; k++) {
+			File lib = ix_libTmp(specs[k]);
+			File idx = ix_shard(specs[k]);
+			if (!lib.exists() || lib.length() == 0 || !idx.exists() || idx.length() == 0) {
+				i.syso("IX abort: missing " + specs[k]);
+				i.sss("ix.failed", "1");
+				return;
+			}
+			try {
+				JSONArray part = new JSONArray(ix_readFile(idx));
+				for (int j = 0; j < part.length(); j++) {
+					all.put(part.opt(j));
+				}
+			} catch (Throwable t) {
+			}
+		}
+
+		// 2. 搜索索引先写到 tmp，和书刊库一起换
+		FileOutputStream o = new FileOutputStream(new File(ix_tmpDir(), "index.json"));
+		o.write(all.toString().getBytes("UTF-8"));
+		o.flush();
+		o.close();
+
+		// 3. 提交：先库文件，再搜索索引，最后版本号
+		for (int k = 0; k < specs.length; k++) {
+			if (!ix_moveTo(ix_libTmp(specs[k]), ix_lib(specs[k]))) {
+				i.syso("IX abort: move fail " + specs[k]);
+				i.sss("ix.failed", "1");
+				return;
+			}
+		}
+		if (!ix_moveTo(new File(ix_tmpDir(), "index.json"), new File(ix_dir(), "index.json"))) {
+			i.sss("ix.failed", "1");
+			return;
+		}
+		ix_verWrite();
+		i.sss("ix.failed", "0");
+		i.syso("IX finish n=" + all.length());
+	} catch (Throwable t) {
+		i.syso("IX finish ! " + t);
+		i.sss("ix.failed", "1");
+	}
+}
+
+public boolean ix_moveTo(File from, File to) {
+	try {
+		if (to.exists()) {
+			to.delete();
+		}
+		return from.renameTo(to);
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+public boolean ix_failed() {
+	return ix_flag("ix.failed");
+}
+
+// 读布尔标志：i.sss 未写过返回 null，直接 String.valueOf(null) 会炸
+public boolean ix_flag(String key) {
+	try {
+		Object o = i.sss(key);
+		if (o == null) {
+			return false;
+		}
+		return "1".equals(String.valueOf(o));
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+// 只清暂存区：重建失败时正式库不受影响
+public void ix_resetTmp() {
+	try {
+		File[] fs = ix_tmpDir().listFiles();
+		if (fs != null) {
+			for (int k = 0; k < fs.length; k++) {
+				fs[k].delete();
+			}
+		}
+		i.sss("ix.running", "0");
+		i.sss("ix.failed", "0");
+		i.syso("IX tmp reset");
+	} catch (Throwable t) {
+		i.syso("IX reset ! " + t);
+	}
+}
+
+// ---------- 查询 ----------
+
+public JSONArray ix_all() {
+	try {
+		Object cached = i.sss("ix.data");
+		if (cached != null) {
+			return (JSONArray) cached;
+		}
+	} catch (Throwable t) {
+	}
+	try {
+		File f = new File(ix_dir(), "index.json");
+		if (!f.exists()) {
+			return null;
+		}
+		FileInputStream in = new FileInputStream(f);
+		BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+		StringBuilder sb = new StringBuilder();
+		String line = r.readLine();
+		while (line != null) {
+			sb.append(line);
+			line = r.readLine();
+		}
+		r.close();
+		JSONArray arr = new JSONArray(sb.toString());
+		i.sss("ix.data", arr);
+		return arr;
+	} catch (Throwable t) {
+		i.syso("IX load ! " + t);
+		return null;
+	}
+}
+
+// 书名 / 作者 / 刊名的子串匹配，不区分大小写
+public JSONArray ix_search(String q) {
+	JSONArray out = new JSONArray();
+	if (q == null || q.length() == 0) {
+		return out;
+	}
+	JSONArray all = ix_all();
+	if (all == null) {
+		return out;
+	}
+	String key = q.toLowerCase();
+	for (int k = 0; k < all.length(); k++) {
+		JSONObject o = all.optJSONObject(k);
+		if (o == null) {
+			continue;
+		}
+		String t = o.optString("t", "").toLowerCase();
+		String a = o.optString("a", "").toLowerCase();
+		if (t.indexOf(key) >= 0 || a.indexOf(key) >= 0) {
+			out.put(o);
+		}
+	}
+	return out;
+}

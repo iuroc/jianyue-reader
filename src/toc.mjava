@@ -1,0 +1,496 @@
+// 目录抽屉：M3 模态抽屉（DrawerLayout）+ 递归树。
+// 默认只展开顶层；打开时自动展开当前阅读位置的祖先链并聚焦到最深命中项。
+
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import androidx.drawerlayout.widget.DrawerLayout;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public JSONArray toc_cats() {
+	try {
+		Object o = ui_get("rd.cats");
+		if (o == null) {
+			return null;
+		}
+		return new JSONArray(String.valueOf(o));
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public int toc_page() {
+	try {
+		Object o = ui_get("rd.page");
+		if (o != null) {
+			return Integer.parseInt(String.valueOf(o));
+		}
+	} catch (Throwable t) {
+	}
+	return 1;
+}
+
+public HashSet toc_exp() {
+	Object o = i.sss("toc.exp");
+	if (o == null) {
+		o = new HashSet();
+		i.sss("toc.exp", o);
+	}
+	return (HashSet) o;
+}
+
+public boolean toc_isOpen() {
+	try {
+		DrawerLayout dl = (DrawerLayout) ui_get("toc.dl");
+		if (dl == null) {
+			return false;
+		}
+		if (dl.isDrawerOpen(Gravity.START)) {
+			return true;
+		}
+		// 滑出/收起动画途中 isDrawerOpen 仍报 false，用面板的左偏移兜底：
+		// 抽屉完全收起时 left == -width，只要比它靠右就算「正在/已经弹出」
+		View p = (View) ui_get("toc.panel");
+		if (p == null) {
+			return false;
+		}
+		int w = p.getWidth();
+		return w > 0 && p.getLeft() > -w;
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+public void toc_close() {
+	try {
+		DrawerLayout dl = (DrawerLayout) ui_get("toc.dl");
+		if (dl != null) {
+			dl.closeDrawers();
+		}
+	} catch (Throwable t) {
+	}
+}
+
+public void toc_wire() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+}
+
+public void toc_open() {
+	toc_wire();
+	JSONArray cats = toc_cats();
+	if (cats == null || cats.length() == 0) {
+		return;
+	}
+	DrawerLayout dl = (DrawerLayout) ui_get("toc.dl");
+	if (dl == null) {
+		return;
+	}
+	toc_fill();
+	// 弹出前解锁，让抽屉能正常滑出、也能右滑收回
+	dl.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED, Gravity.START);
+	dl.openDrawer(Gravity.START);
+}
+
+// 目录只从底栏按钮进入：收起状态下锁死左边缘手势，读书时不会误滑出抽屉
+public void toc_lock(boolean locked) {
+	try {
+		DrawerLayout dl = (DrawerLayout) ui_get("toc.dl");
+		if (dl == null) {
+			return;
+		}
+		int mode = locked ? DrawerLayout.LOCK_MODE_LOCKED_CLOSED : DrawerLayout.LOCK_MODE_UNLOCKED;
+		dl.setDrawerLockMode(mode, Gravity.START);
+	} catch (Throwable t) {
+		ui_log("toc lock " + t);
+	}
+}
+
+// ---------- 构建 ----------
+// 抽屉必须包住阅读内容本身：DrawerLayout 的 onTouchEvent 恒返回 true，
+// 若把它当成浮在页面上的全屏浮层，关闭后仍会吞掉底栏与正文的所有点击。
+
+public ViewGroup toc_wrap(ViewGroup host, View content) {
+	toc_wire();
+	// ui_reg 的句柄跨页面存活：上一次阅读页的 DrawerLayout 还挂在旧 safe 上，
+	// 直接复用会撞 "child already has a parent"，所以每次建页都重建抽屉。
+	Object old = ui_get("toc.dl");
+	if (old != null) {
+		try {
+			ViewGroup op = (ViewGroup) ((View) old).getParent();
+			if (op != null) {
+				op.removeView((View) old);
+			}
+		} catch (Throwable t) {
+		}
+	}
+	DrawerLayout dl = new DrawerLayout(activity);
+	dl.setScrimColor(ui_color(th_night() ? "#52000000" : "#521C1A17"));
+	dl.addView(content, new DrawerLayout.LayoutParams(-1, -1));
+	toc_panelBuild(dl);
+	ui_reg("toc.dl", dl);
+	// 收起时锁边缘手势；抽屉完全收起后再锁上（打开期间保持可拖动）
+	dl.addDrawerListener(new DrawerLayout.DrawerListener() {
+		public void onDrawerSlide(View v, float f) {
+		}
+
+		public void onDrawerOpened(View v) {
+		}
+
+		public void onDrawerClosed(View v) {
+			toc_lock(true);
+		}
+
+		public void onDrawerStateChanged(int s) {
+		}
+	});
+	toc_lock(true);
+
+	host.addView(dl, new FrameLayout.LayoutParams(-1, -1));
+	return dl;
+}
+
+public void toc_panelBuild(DrawerLayout dl) {
+	if (dl == null) {
+		return;
+	}
+	LinearLayout panel = ui_col();
+	panel.setBackground(toc_panelBg());
+	DrawerLayout.LayoutParams dp = new DrawerLayout.LayoutParams(ui_dp(320), -1);
+	dp.gravity = Gravity.START;
+	dl.addView(panel, dp);
+
+	// 标题行
+	LinearLayout head = ui_row();
+	head.setGravity(Gravity.CENTER_VERTICAL);
+	head.setPadding(ui_dp(20), ui_dp(16), ui_dp(8), ui_dp(12));
+	TextView title = ui_text("目录", 20, th_ink1());
+	head.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+	head.addView(wg_iconButton("close", 24, th_ink2(), 48, new Runnable() {
+		public void run() {
+			toc_close();
+		}
+	}));
+	panel.addView(head, new LinearLayout.LayoutParams(-1, -2));
+	panel.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	LinearLayout list = ui_col();
+	sv.addView(list, new FrameLayout.LayoutParams(-1, -2));
+	ui_addWeight(panel, sv, -1, 0, 1f);
+
+	ui_reg("toc.sv", sv);
+	ui_reg("toc.list", list);
+	ui_reg("toc.panel", panel);
+}
+
+public GradientDrawable toc_panelBg() {
+	GradientDrawable d = new GradientDrawable();
+	d.setColor(ui_color(th_surface()));
+	float r = (float) ui_dp(16);
+	float z = 0f;
+	float[] radii = new float[] {z, z, r, r, r, r, z, z};
+	d.setCornerRadii(radii);
+	return d;
+}
+
+// ---------- 填充 ----------
+
+public void toc_fill() {
+	LinearLayout list = (LinearLayout) ui_get("toc.list");
+	if (list == null) {
+		return;
+	}
+	list.removeAllViews();
+	toc_keysReset();
+
+	JSONArray cats = toc_cats();
+	HashSet exp = toc_exp();
+	exp.clear();
+
+	String focus = toc_findFocus(cats, toc_page(), "");
+	ui_reg("toc.focus", focus == null ? "" : focus);
+
+	toc_walk(cats, 0, 1, "", list, focus);
+	toc_scrollFocus(list, focus);
+}
+
+public String toc_key(JSONObject n, String path) {
+	String id = n.optString("id", "");
+	if (id.length() == 0) {
+		id = n.optString("href", "");
+	}
+	if (id.length() == 0) {
+		id = "s" + n.optInt("snum", 0);
+	}
+	// 同一本 EPUB 里多个子项可能共用一个文件（id/href 都是 txt007），只拿 id 当键会撞：
+	// 展开一个等于展开全部、命中一个等于整排高亮。用文件内锚点下标 contentIndex 把键分开，
+	// 没有该字段时退回 snum（同样是逐项唯一的序号）
+	int ci = n.optInt("contentIndex", -1);
+	if (ci < 0) {
+		ci = n.optInt("snum", 0);
+	}
+	return path + "/" + id + "#" + ci;
+}
+
+// 返回命中节点键，并展开其祖先链
+public String toc_findFocus(JSONArray arr, int curPage, String path) {
+	if (arr == null) {
+		return null;
+	}
+	JSONObject best = null;
+	String bestKey = null;
+	for (int k = 0; k < arr.length(); k++) {
+		JSONObject n = arr.optJSONObject(k);
+		if (n == null) {
+			continue;
+		}
+		if (n.optInt("page", 1) <= curPage) {
+			best = n;
+			bestKey = toc_key(n, path);
+		}
+	}
+	if (best == null) {
+		return null;
+	}
+	JSONArray kids = best.optJSONArray("children");
+	if (kids != null && kids.length() > 0) {
+		String sub = toc_findFocus(kids, curPage, bestKey);
+		if (sub != null) {
+			toc_exp().add(bestKey);
+			return sub;
+		}
+	}
+	return bestKey;
+}
+
+public void toc_walk(JSONArray arr, int depth, int parentPage, String path, LinearLayout list, String focus) {
+	if (arr == null) {
+		return;
+	}
+	for (int k = 0; k < arr.length(); k++) {
+		JSONObject n = arr.optJSONObject(k);
+		if (n == null) {
+			continue;
+		}
+		String key = toc_key(n, path);
+		int page = n.optInt("page", 1);
+		boolean isFocus = focus != null && focus.equals(key);
+		toc_keysAdd(key);
+		list.addView(toc_row(n, depth, page, parentPage, key, isFocus));
+
+		JSONArray kids = n.optJSONArray("children");
+		if (kids != null && kids.length() > 0 && toc_exp().contains(key)) {
+			toc_walk(kids, depth + 1, page, key, list, focus);
+		}
+	}
+}
+
+public View toc_row(JSONObject n, int depth, int page, int parentPage, String key, boolean focus) {
+	LinearLayout row = ui_row();
+	row.setGravity(Gravity.CENTER_VERTICAL);
+	row.setMinimumHeight(ui_dp(52));
+	int indent = 20 + depth * 14;
+	row.setPadding(ui_dp(indent), 0, ui_dp(12), 0);
+
+	String title = n.optString("title", "");
+	int sp = depth == 0 ? 15 : 13;
+	String color = depth == 0 ? th_ink1() : th_ink2();
+	if (focus) {
+		color = th_ink1();
+	}
+
+	if (focus) {
+		View bar = new View(activity);
+		GradientDrawable bd = new GradientDrawable();
+		bd.setColor(ui_color(th_accent()));
+		bd.setCornerRadius(ui_dp(1));
+		bar.setBackground(bd);
+		LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ui_dp(2), ui_dp(16));
+		blp.rightMargin = ui_dp(8);
+		row.addView(bar, blp);
+	}
+
+	TextView t = ui_text(title, sp, color);
+	t.setSingleLine(true);
+	t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+	if (focus) {
+		t.setTypeface(null, Typeface.BOLD);
+	}
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, -2, 1f);
+	t.setLayoutParams(tlp);
+	row.addView(t);
+
+	JSONArray kids = n.optJSONArray("children");
+	if (kids != null && kids.length() > 0) {
+		boolean open = toc_exp().contains(key);
+		// 点击区做正方形、涟漪画在它身上：旋转只作用于里面的图标，
+		// 否则背景会跟着转，收起/展开两种状态的涟漪形状不一致（36×48 椭圆 ↔ 48×36 椭圆）
+		FrameLayout chevBox = ui_frame();
+		LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(ui_dp(36), ui_dp(36));
+		clp.leftMargin = ui_dp(4);
+		chevBox.setLayoutParams(clp);
+		wg_ripple(chevBox, 18, true);
+
+		ImageView chev = ic_make("chev", 18, th_ink2());
+		chev.setRotation(open ? 90f : 0f);
+		FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(ui_dp(18), ui_dp(18));
+		ilp.gravity = Gravity.CENTER;
+		chevBox.addView(chev, ilp);
+
+		String ckey = key;
+		chevBox.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				toc_toggle(ckey);
+			}
+		});
+		row.addView(chevBox);
+	} else {
+		View pad = new View(activity);
+		pad.setLayoutParams(new LinearLayout.LayoutParams(ui_dp(36), 1));
+		row.addView(pad);
+	}
+
+	// 页码放在最右侧：作为行的最后一个子控件，数字右边缘自然对齐，
+	// 不再被展开箭头那 36dp 的占位推出一段空白
+	boolean showPage = depth == 0 || page != parentPage;
+	if (showPage) {
+		TextView pv = ui_text(String.valueOf(page), 13, th_ink2());
+		LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(-2, -2);
+		plp.leftMargin = ui_dp(8);
+		pv.setLayoutParams(plp);
+		row.addView(pv);
+	}
+
+	int target = page;
+	row.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			toc_pick(target);
+		}
+	});
+	wg_ripple(row, 0, false);
+	return row;
+}
+
+public void toc_toggle(String key) {
+	toc_wire();
+	HashSet exp = toc_exp();
+	if (exp.contains(key)) {
+		exp.remove(key);
+	} else {
+		exp.add(key);
+	}
+	toc_refillKeepScroll();
+}
+
+// 展开/收起后重建，但保持滚动位置
+public void toc_refillKeepScroll() {
+	ScrollView sv = (ScrollView) ui_get("toc.sv");
+	int y = 0;
+	if (sv != null) {
+		y = sv.getScrollY();
+	}
+	LinearLayout list = (LinearLayout) ui_get("toc.list");
+	if (list == null) {
+		return;
+	}
+	list.removeAllViews();
+	toc_keysReset();
+	JSONArray cats = toc_cats();
+	Object f = ui_get("toc.focus");
+	String focus = f == null ? "" : String.valueOf(f);
+	toc_walk(cats, 0, 1, "", list, focus);
+	if (sv != null) {
+		sv.scrollTo(0, y);
+	}
+}
+
+public void toc_pick(int page) {
+	toc_wire();
+	toc_close();
+	try {
+		i.fn("reader");
+		rd_jump(page);
+	} catch (Throwable t) {
+		ui_log("toc pick " + t);
+	}
+}
+
+public void toc_scrollFocus(LinearLayout list, String focus) {
+	if (focus == null) {
+		return;
+	}
+	ScrollView sv = (ScrollView) ui_get("toc.sv");
+	if (sv == null) {
+		return;
+	}
+	list.post(new Runnable() {
+		public void run() {
+			int top = -1;
+			for (int k = 0; k < list.getChildCount(); k++) {
+				View row = list.getChildAt(k);
+				if (row == null) {
+					continue;
+				}
+				if (toc_rowIs(row, focus, list, k)) {
+					top = row.getTop();
+					break;
+				}
+			}
+			if (top < 0) {
+				return;
+			}
+			int third = sv.getHeight() / 3;
+			int y = top - third;
+			if (y < 0) {
+				y = 0;
+			}
+			sv.scrollTo(0, y);
+		}
+	});
+}
+
+// 行与键按建立顺序一一对应
+public ArrayList toc_keys() {
+	Object o = i.sss("toc.keys");
+	if (o == null) {
+		o = new ArrayList();
+		i.sss("toc.keys", o);
+	}
+	return (ArrayList) o;
+}
+
+public void toc_keysReset() {
+	toc_keys().clear();
+}
+
+public void toc_keysAdd(String key) {
+	toc_keys().add(key);
+}
+
+public boolean toc_rowIs(View row, String focus, LinearLayout list, int idx) {
+	try {
+		ArrayList keys = toc_keys();
+		if (idx >= 0 && idx < keys.size()) {
+			return String.valueOf(keys.get(idx)).equals(focus);
+		}
+	} catch (Throwable t) {
+	}
+	return false;
+}

@@ -1,0 +1,192 @@
+// 图书详情：封面居中、书名、作者、简介、开始阅读。
+// 数据由列表页通过 i.sss("detail.book") 传入。
+
+import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import org.json.JSONObject;
+
+public void first() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	ui_init(ui_root());
+	build();
+}
+
+public void second() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void again() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void back() {
+	activity.finish();
+}
+
+public void build() {
+	View bg = ui_layer("bg");
+	if (bg != null) {
+		bg.setBackgroundColor(ui_color(th_bg()));
+	}
+	View safe = ui_layer("safe");
+	if (safe == null) {
+		return;
+	}
+
+	LinearLayout page = ui_col();
+	ui_add((ViewGroup) safe, page, -1, -1);
+
+	page.addView(wg_header("", "", new Runnable() {
+		public void run() {
+			back();
+		}
+	}, null));
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	ui_addWeight(page, sv, -1, 0, 1f);
+
+	LinearLayout body = ui_col();
+	body.setPadding(ui_dp(20), ui_dp(20), ui_dp(20), ui_dp(32));
+	sv.addView(body, new FrameLayout.LayoutParams(-1, -2));
+
+	JSONObject b = detailBook();
+	if (b == null) {
+		body.addView(wg_message("内容已失效", "返回列表重新选择", "返回", new Runnable() {
+			public void run() {
+				back();
+			}
+		}), new LinearLayout.LayoutParams(-1, ui_dp(280)));
+		return;
+	}
+
+	String title = b.optString("title", "");
+	String author = b.optString("author", "");
+	String summary = b.optString("summary", "");
+
+	body.addView(coverOf(b, 132, 198));
+
+	TextView t = ui_text(title, 20, th_ink1());
+	t.setGravity(Gravity.CENTER_HORIZONTAL);
+	LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
+	tlp.topMargin = ui_dp(20);
+	tlp.leftMargin = ui_dp(8);
+	tlp.rightMargin = ui_dp(8);
+	t.setLayoutParams(tlp);
+	body.addView(t);
+
+	if (author.length() > 0) {
+		TextView a = ui_text(author, 13, th_ink2());
+		a.setGravity(Gravity.CENTER_HORIZONTAL);
+		LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-1, -2);
+		alp.topMargin = ui_dp(8);
+		a.setLayoutParams(alp);
+		body.addView(a);
+	}
+
+	View hr1 = wg_hairline();
+	LinearLayout.LayoutParams h1 = new LinearLayout.LayoutParams(-1, 1);
+	h1.topMargin = ui_dp(24);
+	h1.bottomMargin = ui_dp(16);
+	body.addView(hr1, h1);
+
+	if (summary.length() > 0) {
+		TextView s = ui_text(summary, 17, th_ink2());
+		s.setLineSpacing(0f, 1.7f);
+		wg_justify(s);
+		body.addView(s, new LinearLayout.LayoutParams(-1, -2));
+	}
+
+	// 主按钮固定在底部，不随内容滚动，保证随时够得着
+	LinearLayout foot = ui_col();
+	foot.setPadding(ui_dp(20), ui_dp(8), ui_dp(20), ui_dp(12));
+	foot.setBackgroundColor(ui_color(th_bg()));
+
+	TextView btn = ui_text("开始阅读", 17, th_bg());
+	btn.setGravity(Gravity.CENTER);
+	wg_rippleFill(btn, 28, th_ink1(), false);
+	btn.setOnClickListener(new View.OnClickListener() {
+		public void onClick(View v) {
+			startRead();
+		}
+	});
+	foot.addView(btn, new LinearLayout.LayoutParams(-1, ui_dp(56)));
+
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+	page.addView(foot, new LinearLayout.LayoutParams(-1, -2));
+	ui_log("detail build ok");
+}
+
+public JSONObject detailBook() {
+	try {
+		Object o = i.sss("detail.book");
+		if (o == null) {
+			return null;
+		}
+		return new JSONObject(String.valueOf(o));
+	} catch (Throwable t) {
+		return null;
+	}
+}
+
+public FrameLayout coverOf(JSONObject b, int wDp, int hDp) {
+	FrameLayout box = ui_frame();
+	LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ui_dp(wDp), ui_dp(hDp));
+	lp.gravity = Gravity.CENTER_HORIZONTAL;
+	box.setLayoutParams(lp);
+
+	// 骨架屏占位，不放首字
+	wg_coverBg(box, 2);
+
+	ImageView iv = ui_image();
+	ui_reg("bd.cover", iv);
+	iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+	ui_fplace(box, iv, -1, -1, Gravity.TOP | Gravity.LEFT);
+
+	String cover = b.optString("cover", "");
+	if (cover.length() == 0) {
+		cover = b.optString("bcover", "");
+	}
+	if (cover.length() > 0) {
+		try {
+			i.us(iv, "src", cover);
+		} catch (Throwable t) {
+			ui_log("detail cover " + t);
+		}
+	}
+	return box;
+}
+
+public void startRead() {
+	ui_log("detail startRead>");
+	JSONObject b = detailBook();
+	if (b == null) {
+		return;
+	}
+	String surl = b.optString("surl", "");
+	String title = b.optString("title", "");
+	ui_log("detail surl=[" + surl + "] title=[" + title + "]");
+	if (surl.length() == 0) {
+		ui_log("详情缺少 surl");
+		return;
+	}
+	i.sss("reader.surl", surl);
+	i.sss("reader.title", title);
+	i.sss("reader.author", b.optString("author", ""));
+	ui_log("detail uigo reader");
+	i.uigo("reader.iyu");
+}

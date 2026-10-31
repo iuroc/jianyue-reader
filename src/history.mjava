@@ -1,0 +1,93 @@
+// 阅读历史（全部）：从「我的」页的「查看全部」进入。
+// 行样式直接复用 mine.mjava 的 mine_histRow，不再各画一套；排序也复用 store 的倒序版本。
+
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public void first() {
+	i.fn("ui");
+	i.fn("theme");
+	i.fn("icon");
+	i.fn("widgets");
+	i.fn("store");
+	ui_init(ui_root());
+	build();
+}
+
+public void second() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void again() {
+	i.fn("ui");
+	ui_insets();
+}
+
+public void back() {
+	activity.finish();
+}
+
+public void key(Object kc) {
+	int code = 0;
+	try {
+		if (kc instanceof Number) {
+			code = ((Number) kc).intValue();
+		}
+	} catch (Throwable t) {
+	}
+	if (code == 4) {
+		back();
+	}
+}
+
+public void build() {
+	View bg = ui_layer("bg");
+	if (bg != null) {
+		bg.setBackgroundColor(ui_color(th_bg()));
+	}
+	View safe = ui_layer("safe");
+	if (safe == null) {
+		return;
+	}
+
+	LinearLayout page = ui_col();
+	ui_add((ViewGroup) safe, page, -1, -1);
+
+	page.addView(wg_header("阅读历史", "", new Runnable() {
+		public void run() {
+			back();
+		}
+	}, null));
+	page.addView(wg_hairline(), new LinearLayout.LayoutParams(-1, 1));
+
+	ScrollView sv = new ScrollView(activity);
+	sv.setVerticalScrollBarEnabled(false);
+	ui_addWeight(page, sv, -1, 0, 1f);
+
+	LinearLayout body = ui_col();
+	sv.addView(body, new FrameLayout.LayoutParams(-1, -2));
+
+	JSONArray arr = st_progressSorted();
+	if (arr.length() == 0) {
+		TextView empty = ui_text("还没有阅读记录", 15, th_ink2());
+		empty.setPadding(ui_dp(20), ui_dp(24), ui_dp(20), 0);
+		body.addView(empty);
+		return;
+	}
+
+	i.fn("mine");
+	for (int k = 0; k < arr.length(); k++) {
+		JSONObject o = arr.optJSONObject(k);
+		if (o != null) {
+			body.addView(mine_histRow(o));
+		}
+	}
+}
