@@ -15,12 +15,70 @@ import org.json.JSONObject;
 
 // ---------- 目录与状态 ----------
 
+// 打包态 i.syso 不输出；用 android.util.Log 让构建失败原因能进 logcat（tag JY）。
+public void ix_log(String s) {
+	try {
+		android.util.Log.e("JY", s);
+	} catch (Throwable t) {
+	}
+	try {
+		i.syso(s);
+	} catch (Throwable t) {
+	}
+}
+
+public void ix_err(String s) {
+	ix_log(s);
+	try {
+		i.sss("ix.err", s);
+	} catch (Throwable t) {
+	}
+}
+
+public String ix_errText() {
+	try {
+		Object o = i.sss("ix.err");
+		return o == null ? "" : String.valueOf(o);
+	} catch (Throwable t) {
+		return "";
+	}
+}
+
 public File ix_dir() {
 	File d = new File(activity.getFilesDir(), "jianyue/index");
 	if (!d.exists()) {
 		d.mkdirs();
 	}
 	return d;
+}
+
+// 跨解释器/线程的收尾去重：工作线程的 i.sss 表不共享，文件锁才可靠。
+// createNewFile 是原子的：已存在返回 false。
+public File ix_lockFile(String name) {
+	return new File(ix_dir(), name);
+}
+
+public boolean ix_lockHas(String name) {
+	try {
+		return ix_lockFile(name).exists();
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+public boolean ix_lockMake(String name) {
+	try {
+		return ix_lockFile(name).createNewFile();
+	} catch (Throwable t) {
+		return false;
+	}
+}
+
+public void ix_lockClear(String name) {
+	try {
+		ix_lockFile(name).delete();
+	} catch (Throwable t) {
+	}
 }
 
 // 建库期间一律写 tmp/，全部成功后才整体替换正式目录：
@@ -277,7 +335,7 @@ public void ix_fetchOne(String spec) {
 		arr = msg == null ? null : msg.optJSONArray("list");
 	}
 	if (arr == null) {
-		i.syso("IX fail " + spec);
+		ix_err("fetch " + spec + " : " + net_lastError());
 		return;
 	}
 
@@ -288,7 +346,7 @@ public void ix_fetchOne(String spec) {
 		lo.flush();
 		lo.close();
 	} catch (Throwable t) {
-		i.syso("IX lib ! " + t);
+		ix_err("lib " + spec + " : " + t);
 	}
 
 	JSONArray out = new JSONArray();
@@ -322,9 +380,9 @@ public void ix_fetchOne(String spec) {
 		o2.flush();
 		o2.close();
 		ix_markDone(spec);
-		i.syso("IX shard " + spec + " n=" + out.length());
+		ix_log("IX shard " + spec + " n=" + out.length());
 	} catch (Throwable t) {
-		i.syso("IX write ! " + t);
+		ix_err("shard " + spec + " : " + t);
 	}
 }
 
@@ -341,6 +399,10 @@ public int ix_running() {
 	return 0;
 }
 
+public int ix_finishing() {
+	return ix_lockHas("finishing.lock") ? 1 : 0;
+}
+
 // 清空本地索引（state.json / idx_*.json / index.json），下次进搜索页从头重建
 public void ix_start() {
 	ix_start(false);
@@ -348,12 +410,28 @@ public void ix_start() {
 
 // force=true：已有旧库也要重建（「我的 → 重建索引」）
 public void ix_start(boolean force) {
+	ix_log("IX start force=" + force + " running=" + ix_running() + " finishing=" + ix_finishing());
 	if (ix_running() == 1) {
+		ix_log("IX start ignored: running");
 		return;
+	}
+	// 收尾进行中不要再起一轮，否则会把已搬走的 tmp 文件当成缺失。
+	// 进程被杀可能留下 finishing.lock：超过 120 秒视为陈旧锁并清掉。
+	if (ix_finishing() == 1) {
+		long age = System.currentTimeMillis() - ix_lockFile("finishing.lock").lastModified();
+		if (age < 120000L) {
+			ix_log("IX start ignored: finishing");
+			return;
+		}
+		ix_log("IX stale finishing.lock cleared");
+		ix_lockClear("finishing.lock");
 	}
 	if (!force && ix_ready()) {
 		return;
 	}
+	// 新构建开始：允许这一轮收尾执行一次
+	ix_lockClear("finishing.lock");
+	ix_lockClear("finishOnce.lock");
 	// 旧格式：只清暂存区，重建成功后提交时才替换正式库
 	if (!ix_verOk()) {
 		ix_resetTmp();
@@ -382,7 +460,7 @@ public void ix_start(boolean force) {
 					i.fn("net");
 					ix_fetchOne(spec);
 				} catch (Throwable t) {
-					i.syso("IX task ! " + t);
+					ix_err("task " + spec + " : " + t);
 				}
 				int now = left.decrementAndGet();
 				if (now <= 0) {
@@ -408,6 +486,13 @@ public void ix_start(boolean force) {
 // 任何一步不完整就放弃提交，正式库保持原样（旧缓存继续可用）。
 public void ix_finish() {
 	try {
+		// 收尾只能执行一次：最后一个任务和 ix_start 的兜底检查可能各触发一次，
+		// 第二次执行时 tmp 已搬走，会把成功的构建误判成 missing。
+		if (!ix_lockMake("finishOnce.lock")) {
+			ix_log("IX finish dup ignored");
+			return;
+		}
+		ix_lockMake("finishing.lock");
 		i.sss("ix.running", "0");
 		ExecutorService pool = null;
 		try {
@@ -425,8 +510,11 @@ public void ix_finish() {
 			File lib = ix_libTmp(specs[k]);
 			File idx = ix_shard(specs[k]);
 			if (!lib.exists() || lib.length() == 0 || !idx.exists() || idx.length() == 0) {
-				i.syso("IX abort: missing " + specs[k]);
+				ix_err("abort missing " + specs[k]
+					+ " lib=" + (lib.exists() ? lib.length() : -1)
+					+ " idx=" + (idx.exists() ? idx.length() : -1));
 				i.sss("ix.failed", "1");
+				ix_lockClear("finishing.lock");
 				return;
 			}
 			try {
@@ -447,21 +535,26 @@ public void ix_finish() {
 		// 3. 提交：先库文件，再搜索索引，最后版本号
 		for (int k = 0; k < specs.length; k++) {
 			if (!ix_moveTo(ix_libTmp(specs[k]), ix_lib(specs[k]))) {
-				i.syso("IX abort: move fail " + specs[k]);
+				ix_err("abort move fail " + specs[k]);
 				i.sss("ix.failed", "1");
+				ix_lockClear("finishing.lock");
 				return;
 			}
 		}
 		if (!ix_moveTo(new File(ix_tmpDir(), "index.json"), new File(ix_dir(), "index.json"))) {
+			ix_err("abort move fail index.json");
 			i.sss("ix.failed", "1");
+			ix_lockClear("finishing.lock");
 			return;
 		}
 		ix_verWrite();
 		i.sss("ix.failed", "0");
-		i.syso("IX finish n=" + all.length());
+		ix_lockClear("finishing.lock");
+		ix_log("IX finish n=" + all.length());
 	} catch (Throwable t) {
-		i.syso("IX finish ! " + t);
+		ix_err("finish : " + t);
 		i.sss("ix.failed", "1");
+		ix_lockClear("finishing.lock");
 	}
 }
 

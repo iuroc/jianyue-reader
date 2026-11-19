@@ -25,7 +25,13 @@ public void first() {
 		return;
 	}
 	buildShell();
-	if (!ix_ready() || ix_flag("boot.rebuild")) {
+	boolean ready = ix_ready();
+	boolean rebuild = ix_flag("boot.rebuild");
+	if (!ready || rebuild) {
+		try {
+			android.util.Log.e("JY", "HOME boot ready=" + ready + " rebuild=" + rebuild);
+		} catch (Throwable t) {
+		}
 		i.sss("boot.pending", "1");
 		i.uigo("boot.iyu");
 	}
@@ -62,7 +68,13 @@ public void again() {
 	if (needBuild) {
 		buildShell();
 	}
-	if (!ix_ready() || ix_flag("boot.rebuild")) {
+	boolean ready = ix_ready();
+	boolean rebuild = ix_flag("boot.rebuild");
+	if (!ready || rebuild) {
+		try {
+			android.util.Log.e("JY", "HOME boot ready=" + ready + " rebuild=" + rebuild);
+		} catch (Throwable t) {
+		}
 		i.sss("boot.pending", "1");
 		i.uigo("boot.iyu");
 		return;

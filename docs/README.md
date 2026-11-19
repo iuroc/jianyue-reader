@@ -10,6 +10,7 @@
 | `ui/grid-compare.html` | 书架三列网格的排版方案对照页（浏览器直接打开） |
 | `reader-layout.md` | 阅读页全屏、CSS 边距、旋转恢复、底部操作栏与 Aa 抽屉规则 |
 | `permissions.md` | 权限最终集合、iApp 权限页与源目录的同步流程、闸门行为 |
+| `index-build.md` | 本地书刊库构建、收尾去重、boot 重入保护与打包态诊断 |
 
 ## 约定
 

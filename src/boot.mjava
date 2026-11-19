@@ -109,14 +109,36 @@ public int boot_total() {
 }
 
 public void boot_start() {
-	i.fn("indexer");
+	try {
+		i.fn("indexer");
+	} catch (Throwable t) {
+		try {
+			android.util.Log.e("JY", "BOOT fn indexer ! " + t);
+		} catch (Throwable x) {
+		}
+		return;
+	}
+	boolean manual = ix_flag("boot.rebuild");
+	boolean ready = ix_ready();
+	try {
+		android.util.Log.e("JY", "BOOT start manual=" + manual + " ready=" + ready);
+	} catch (Throwable x) {
+	}
 	// 手动重建：先清暂存区，正式库留到最后一步才换
-	if (ix_flag("boot.rebuild")) {
+	if (manual) {
 		i.sss("boot.rebuild", "0");
 		ix_resetTmp();
+	} else if (ready) {
+		// 上一轮已经建好（首页又送进来一次）：直接回首页，不要再来一轮
+		try {
+			android.util.Log.e("JY", "BOOT already ready, finish");
+		} catch (Throwable x) {
+		}
+		activity.finish();
+		return;
 	}
 	boot_hint(false);
-	ix_start(true);
+	ix_start(manual);
 	boot_tick();
 }
 
@@ -152,16 +174,24 @@ public void boot_tick() {
 
 	// 注意：手动重建时旧库一直在，不能用 ix_ready() 判断「做完了」，要看任务是否还在跑
 	if (ix_running() != 1) {
-		if (ix_failed()) {
+		if (ix_finishing() == 1) {
+			// 收尾提交中：不要提前关页，否则首页会以为库还没建好又跳回来，触发第二轮
+		} else if (ix_failed()) {
 			boot_hint(true);
+			String err = ix_errText();
+			try {
+				android.util.Log.e("JY", "BOOT failed " + err);
+			} catch (Throwable t) {
+			}
 			TextView c = (TextView) ui_get("boot.count");
 			if (c != null) {
-				c.setText("建立失败，旧书刊库仍可继续使用");
+				c.setText(err.length() > 0 ? ("建立失败：" + err) : "建立失败，旧书刊库仍可继续使用");
 			}
 			return;
+		} else {
+			activity.finish();
+			return;
 		}
-		activity.finish();
-		return;
 	}
 
 	View root = ui_root();

@@ -45,3 +45,7 @@
 
 - 权限探针 `com.demo.permprobe`：9 项声明 → iApp 权限页高亮 6 项，目录外 3 项被忽略 ✅ 2026-11-19。
 - 已装 APK（23:46）缺 `INTERNET`，与 iApp 权限页当时只有 `WRITE` 一致 ✅ 2026-11-19。
+- 2026-11-20 重新打包后 `dumpsys package com.jianyue.reader` 的 requested permissions 已含
+  `android.permission.INTERNET: granted=true`，权限闸门不再出现 ✅。
+  iApp 模板仍会附带 `POST_NOTIFICATIONS` / `MANAGE_EXTERNAL_STORAGE` / `QUERY_ALL_PACKAGES`，
+  不影响本应用。
