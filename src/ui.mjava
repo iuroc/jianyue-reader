@@ -166,6 +166,32 @@ public void ui_init(View root) {
 	ui_log("ui_init " + ui_screenW() + "x" + ui_screenH() + " density=" + ui_density());
 }
 
+// 页面互跳后返回：ui_reg 的 bg/safe/overlay 是全局键，已被上一页覆盖；
+// 本页根里的三层仍在，按创建顺序重绑即可。**不要**用 ui_init 代替：
+// 它会 removeAllViews 清空整页，触发首页重新取数，表现为返回卡顿。
+public boolean ui_rebind(View root) {
+	try {
+		ViewGroup g = (ViewGroup) root;
+		if (g == null || g.getChildCount() < 3) {
+			return false;
+		}
+		View bg = g.getChildAt(0);
+		View safe = g.getChildAt(1);
+		View ov = g.getChildAt(2);
+		if (bg == null || safe == null || ov == null || safe.getContext() != activity) {
+			return false;
+		}
+		ui_reg("bg", bg);
+		ui_reg("safe", safe);
+		ui_reg("overlay", ov);
+		ui_log("ui_rebind ok");
+		return true;
+	} catch (Throwable t) {
+		ui_log("ui_rebind " + t);
+		return false;
+	}
+}
+
 // ---------- 状态栏：内容铺满 + 图标明暗 ----------
 // 依据 status-bar-guide.md：状态栏默认就是透明的，那一条显示的是宿主内容容器的背景；
 // 把根从宿主容器取出挂到 DecorView，内容就从 y=0 开始，状态栏后面是页面自己的 bg 层。
@@ -446,6 +472,11 @@ public void ui_insets() {
 	if (root == null) {
 		ui_log("ui_insets root=null");
 		return;
+	}
+	// 从别的页面返回时全局句柄可能指向上一页：先重绑本页三层，再设安全区
+	View cur = ui_layer("safe");
+	if (cur == null || cur.getContext() != activity) {
+		ui_rebind(root);
 	}
 	int[] loc = new int[2];
 	root.getLocationOnScreen(loc);

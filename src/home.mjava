@@ -44,20 +44,22 @@ public void again() {
 	i.fn("indexer");
 	i.fn("perm");
 	// ui_reg 的 bg/safe/overlay 是全局键，每个页面 ui_init() 都会覆盖。
-	// 从阅读器等页面回来后，它们指向的是那一页（已销毁）的 View：此时换主题触发的
-	// buildShell() 会画进死树里，表现成「点了没反应」。发现不是自己这层就重建。
-	boolean rebind = false;
+	// 从阅读器/详情页回来后，它们指向那一页的 View。本页三层还在根里，
+	// 重绑句柄即可；不要 ui_init——那会清空整页并重新取数，表现为返回首页卡顿。
+	boolean needBuild = false;
 	View safeNow = ui_layer("safe");
 	if (safeNow == null || safeNow.getContext() != activity) {
-		ui_init(ui_root());
-		rebind = true;
+		if (!ui_rebind(ui_root())) {
+			ui_init(ui_root());
+			needBuild = true;
+		}
 	}
 	// 授权框关掉后回来：重新校验；还不齐就继续停在闸门
 	if (!pm_ok()) {
 		buildGate();
 		return;
 	}
-	if (rebind) {
+	if (needBuild) {
 		buildShell();
 	}
 	if (!ix_ready() || ix_flag("boot.rebuild")) {
@@ -123,7 +125,7 @@ public void buildGate() {
 	LinearLayout box = ui_col();
 	box.setGravity(Gravity.CENTER);
 
-	TextView t = ui_text("需要授权后才能使用", 17, th_ink1());
+	TextView t = ui_text("安装包缺少网络权限", 17, th_ink1());
 	t.setGravity(Gravity.CENTER);
 	box.addView(t, new LinearLayout.LayoutParams(-1, -2));
 
@@ -139,23 +141,8 @@ public void buildGate() {
 		box.addView(l);
 	}
 
-	TextView a = ui_text("去授权", 15, th_accent());
-	a.setGravity(Gravity.CENTER);
-	a.setPadding(ui_dp(16), ui_dp(12), ui_dp(16), ui_dp(12));
-	LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
-	alp.topMargin = ui_dp(20);
-	a.setLayoutParams(alp);
-	wg_ripple(a, 20, false);
-	a.setOnClickListener(new View.OnClickListener() {
-		public void onClick(View v) {
-			// 点击回调是新解释器：先装载模块再调函数
-			i.fn("perm");
-			pm_request();
-		}
-	});
-	box.addView(a);
-
-	TextView h = ui_text("没有弹出授权框，或之前点了拒绝：请到系统设置 → 应用 → 简阅 → 权限里手动开启，然后返回本页", 13, th_ink2());
+	TextView h = ui_text("当前安装包没有申请网络访问权限。请在 iApp 权限页勾选 INTERNET，重新打包并安装。"
+		+ "INTERNET 是安装期权限，应用内无法临时申请。", 13, th_ink2());
 	h.setGravity(Gravity.CENTER);
 	LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-1, -2);
 	hlp.topMargin = ui_dp(16);

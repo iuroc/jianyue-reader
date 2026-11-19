@@ -1,8 +1,7 @@
 // 入口权限闸门。
-// 本应用真正只需要「网络访问」：数据全部写到 filesDir（应用私有目录），不读外部存储、
-// 也不安装 APK —— manifest 里另外三个声明是模板遗留，可择机清掉。
-// INTERNET 属于安装期权限，正常装完就有；这里仍做检查，用于定制 ROM / 策略关闭的情况，
-// 以及以后新增运行时权限时不用再改入口逻辑。
+// 本应用只需要「网络访问」：数据全部写到 filesDir（应用私有目录），不读外部存储、也不安装 APK。
+// INTERNET 属于安装期权限，iApp 权限页勾上并打包后就会授予；这里只做安装包完整性检查，
+// 提示用户重新打包，而不是提供运行时授权按钮。
 
 public String[] pm_needed() {
 	return new String[] { "android.permission.INTERNET" };
@@ -48,11 +47,5 @@ public boolean pm_ok() {
 	return pm_missing().length == 0;
 }
 
-// 系统授权框是异步的：结果回来后 Activity 会 resume，入口页在 again() 里重新校验
-public void pm_request() {
-	try {
-		activity.requestPermissions(pm_needed(), 1001);
-	} catch (Throwable t) {
-		i.syso("PERM ! " + t);
-	}
-}
+// INTERNET 是安装期权限：iApp 权限页勾了就有，没勾只能重新打包安装。
+// 运行时 requestPermissions 对普通权限不会弹框，只会静默失败，因此不提供应用内授权入口。

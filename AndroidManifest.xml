@@ -9,10 +9,7 @@
 <yuv>3</yuv>
 
 <remark>简约书刊阅读器</remark>
-<Permissions>android.permission.READ_EXTERNAL_STORAGE
-android.permission.REQUEST_INSTALL_PACKAGES
-android.permission.INTERNET
-android.permission.WRITE_EXTERNAL_STORAGE</Permissions>
+<Permissions>android.permission.INTERNET</Permissions>
 <createTime>2026-10-30 21:54:49</createTime>
 <upTime>2026-10-30 21:54:49</upTime>
 </iapp>

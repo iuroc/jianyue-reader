@@ -9,6 +9,7 @@
 | `superpowers/plans/2026-10-31-offline-catalog-cache-design.md` | 离线书刊库（缓存方案 B）设计草案，**下一期**实施 |
 | `ui/grid-compare.html` | 书架三列网格的排版方案对照页（浏览器直接打开） |
 | `reader-layout.md` | 阅读页全屏、CSS 边距、旋转恢复、底部操作栏与 Aa 抽屉规则 |
+| `permissions.md` | 权限最终集合、iApp 权限页与源目录的同步流程、闸门行为 |
 
 ## 约定
 
