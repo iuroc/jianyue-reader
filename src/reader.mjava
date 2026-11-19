@@ -1,6 +1,9 @@
 // 阅读器：一次只渲染一页；底栏常驻；正文按 30 页分段缓存；目录与外观按需浮出。
 
 import android.app.AlertDialog;
+import android.content.ComponentCallbacks;
+import android.content.res.Configuration;
+import android.graphics.Insets;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -14,6 +17,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import java.text.SimpleDateFormat;
@@ -48,7 +52,8 @@ public void again() {
 	rd_insets();
 }
 
-// 阅读页满屏：只藏状态栏，底部导航条不动（底栏按钮还要用）
+// 阅读页全沉浸：状态栏和底部导航栏都藏起来，边缘滑动可临时唤出（随后自动收回）。
+// 导航栏隐藏后横屏不再有左侧 130px 的让位，正文/底栏可以真正贴边。
 public void rd_fullscreen() {
 	try {
 		WindowInsetsController wic = activity.getWindow().getInsetsController();
@@ -56,24 +61,221 @@ public void rd_fullscreen() {
 			return;
 		}
 		wic.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-		wic.hide(WindowInsets.Type.statusBars());
+		wic.hide(WindowInsets.Type.systemBars());
+		// Android 11 / MIUI 12.5 实测：只靠上面的 TRANSIENT 行为，下滑唤出后不会自动隐回；
+		// 叠旧版 IMMERSIVE_STICKY 让系统在唤出后自动收回（手表档 2026-10-29 已验证可用）。
+		activity.getWindow().getDecorView().setSystemUiVisibility(
+			View.SYSTEM_UI_FLAG_FULLSCREEN
+			| View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+			| View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+			| View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+			| View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+			| View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+		);
 	} catch (Throwable t) {
 		ui_log("rd fullscreen " + t);
 	}
 }
 
-// 状态栏藏掉后顶部不该再留那一条：ui_insets 拿不到 inset 时会走 dimens 兜底，
-// 这里把顶部补白清零，底部（导航条 / 键盘 / 缺口）照旧
+// 阅读器始终全屏：安全区四边都不占容器 padding，滚动区域铺满整屏；
+// 顶/底/左右留白全部由 HTML 的 body padding 提供（状态栏/导航栏已隐藏）。
+// overlay 是目录等原生浮层，仍保留左右/底部避让。
 public void rd_insets() {
 	ui_insets();
 	View safe = ui_layer("safe");
 	if (safe != null) {
-		safe.setPadding(0, 0, 0, safe.getPaddingBottom());
+		safe.setPadding(0, 0, 0, 0);
 	}
 	View overlay = ui_layer("overlay");
 	if (overlay != null) {
-		overlay.setPadding(0, 0, 0, overlay.getPaddingBottom());
+		overlay.setPadding(overlay.getPaddingLeft(), 0, overlay.getPaddingRight(), overlay.getPaddingBottom());
 	}
+	rd_barPlace((View) ui_get("rd.bar"));
+}
+
+// 初始顶边距（设备 px）：状态栏高度与挖孔取较大值，状态栏隐藏时也保留。
+public int rd_topPx() {
+	int h = ui_statusBarHeight();
+	try {
+		View root = ui_root();
+		WindowInsets wi = root == null ? null : root.getRootWindowInsets();
+		if (wi != null) {
+			Insets ct = wi.getInsets(WindowInsets.Type.displayCutout());
+			if (ct.top > h) {
+				h = ct.top;
+			}
+		}
+	} catch (Throwable t) {
+	}
+	return h;
+}
+
+// 横屏挖孔在左侧或右侧：取左右挖孔宽度的较大值（设备 px）。
+public int rd_cutoutSidePx() {
+	try {
+		View root = ui_root();
+		WindowInsets wi = root == null ? null : root.getRootWindowInsets();
+		if (wi != null) {
+			Insets ct = wi.getInsets(WindowInsets.Type.displayCutout());
+			return ui_max(ct.left, ct.right);
+		}
+	} catch (Throwable t) {
+	}
+	return 0;
+}
+
+// 左右边距：基础 18px；横屏时若挖孔更宽，用挖孔宽度，保证正文不压到摄像头。
+public int rd_sideDp() {
+	int base = 18;
+	if (ui_realW() > ui_realH()) {
+		int cut = (int) Math.round(rd_cutoutSidePx() / ui_density());
+		if (cut > base) {
+			return cut;
+		}
+	}
+	return base;
+}
+
+// CSS px = dp；viewport 是 width=device-width, initial-scale=1。
+// 竖屏：状态栏/挖孔高度 + 8dp 余量。
+// 横屏：上、左、右三边统一用 rd_sideDp()，保证间距相等且避开挖孔。
+public int rd_topDp() {
+	if (ui_realW() > ui_realH()) {
+		return rd_sideDp();
+	}
+	return (int) Math.round(rd_topPx() / ui_density()) + 8;
+}
+
+// 底部导航条高度（设备 px）：内容要能滚到它下面，body 用等量底边距兜住最后一行。
+public int rd_navBottomPx() {
+	try {
+		View root = ui_root();
+		WindowInsets wi = root == null ? null : root.getRootWindowInsets();
+		if (wi != null) {
+			return wi.getInsets(WindowInsets.Type.systemBars()).bottom;
+		}
+	} catch (Throwable t) {
+	}
+	return ui_dimen("navigation_bar_height");
+}
+
+public int rd_navBottomDp() {
+	return (int) Math.round(rd_navBottomPx() / ui_density());
+}
+
+// 76dp 是给浮层底栏（48dp）留的余量，再加上导航条高度：WebView 现在铺到屏幕最底边。
+public int rd_bottomDp() {
+	return 76 + rd_navBottomDp();
+}
+
+// 底栏显示时要把透明导航条区域一起盖住：高度 = 48dp + 导航条高度，
+// 底部 padding 等于导航条高度，按钮仍留在上面 48dp；隐藏时整条 GONE，正文露出导航条下层。
+public void rd_barPlace(View bar) {
+	try {
+		if (bar == null) {
+			return;
+		}
+		int nav = rd_navBottomPx();
+		ViewGroup.LayoutParams lp = bar.getLayoutParams();
+		if (lp != null) {
+			lp.height = ui_dp(48) + nav;
+			bar.setLayoutParams(lp);
+		}
+		bar.setPadding(bar.getPaddingLeft(), bar.getPaddingTop(), bar.getPaddingRight(), nav);
+		ui_margins(bar, 0, 0, 0, 0);
+	} catch (Throwable t) {
+		ui_log("rd barPlace " + t);
+	}
+}
+
+// 实测：这台设备横竖屏切换时 iApp 页面不会重建（同进程、无新的 ui_init），
+// 安全区不会自动刷新。JS 没开，不能改 body padding，只能重渲染当前页套用新方向的安全区，
+// 并恢复滚动位置。抽屉按新窗口尺寸重开。
+public void rd_watchConfig() {
+	try {
+		if (ui_get("rd.cfg") != null) {
+			return;
+		}
+		ui_reg("rd.cfg", "1");
+		activity.registerComponentCallbacks(new ComponentCallbacks() {
+			public void onConfigurationChanged(Configuration c) {
+				try {
+					rd_panel(false);
+					// 一次旋转会连续回调两次：只保留第一次拿到的进度。
+					// 存「滚动比例」而不是像素：横竖屏内容重排后 max 会变，比例更接近原阅读位置。
+					if (ui_get("rd.restoreRatio") == null) {
+						float ratio = 0f;
+						WebView wv = rd_wv();
+						if (wv != null) {
+							int ch = (int) (wv.getContentHeight() * wv.getScale());
+							int max = ch - wv.getHeight();
+							if (max > 0) {
+								ratio = (float) wv.getScrollY() / max;
+							}
+						}
+						ui_reg("rd.restoreRatio", String.valueOf(ratio));
+					}
+					// 同一次旋转的多个回调只让最后一个执行重渲染
+					long token = System.currentTimeMillis();
+					i.sss("rd.cfgToken", String.valueOf(token));
+					activity.getWindow().getDecorView().postDelayed(new Runnable() {
+						public void run() {
+							try {
+								String cur = String.valueOf(i.sss("rd.cfgToken"));
+								if (!String.valueOf(token).equals(cur)) {
+									ui_log("rd config superseded " + token);
+									return;
+								}
+								rd_insets();
+								rd_jump(rd_page());
+							} catch (Throwable t) {
+								ui_log("rd config run ERR " + t);
+							}
+						}
+					}, 300);
+					ui_log("rd config orientation=" + c.orientation + " token=" + token);
+				} catch (Throwable t) {
+					ui_log("rd config ERR " + t);
+				}
+			}
+			public void onLowMemory() {
+			}
+		});
+	} catch (Throwable t) {
+		ui_log("rd watchConfig " + t);
+	}
+}
+
+// 重渲染后等内容高度稳定（连续两次相同）再恢复滚动比例；最多重试 12 次。
+public void rd_scrollRestore(WebView wv, float ratio, int tries, int lastCh) {
+	if (wv == null || tries <= 0) {
+		return;
+	}
+	WebView v = wv;
+	float r = ratio;
+	int left = tries;
+	int prev = lastCh;
+	v.postDelayed(new Runnable() {
+		public void run() {
+			try {
+				int ch = (int) (v.getContentHeight() * v.getScale());
+				if (ch > 0 && ch == prev) {
+					int max = ch - v.getHeight();
+					int yy = max > 0 ? (int) (r * max) : 0;
+					if (yy < 0) {
+						yy = 0;
+					}
+					v.scrollTo(0, yy);
+					ui_log("rd scrollRestore ok y=" + yy + " ch=" + ch + " max=" + max
+						+ " ratio=" + r);
+					return;
+				}
+				rd_scrollRestore(v, r, left - 1, ch);
+			} catch (Throwable t) {
+				ui_log("rd scrollRestore " + t);
+			}
+		}
+	}, 150);
 }
 
 public void key(Object kc) {
@@ -106,8 +308,9 @@ public void key(Object kc) {
 
 public void build() {
 	ui_log("rd build>");
-	// 阅读页满屏：状态栏藏起来，正文从屏幕顶边开始
+	// 阅读页满屏：状态栏藏起来；顶部仍留状态栏/挖孔安全区（见 rd_insets）
 	rd_fullscreen();
+	rd_watchConfig();
 	// 先清掉上一本书留下的页码 / 总页数 / 目录：ui_reg 的句柄跨页面存活，
 	// 不清的话新书在目录回来之前会先显示上一本的「300 / 500」
 	rd_reset();
@@ -142,6 +345,7 @@ public void build() {
 	LinearLayout bar = rd_bar();
 	ui_reg("rd.bar", bar);
 	ui_fplace(stage, bar, -1, ui_dp(48), Gravity.BOTTOM);
+	rd_barPlace(bar);
 	// 建栏之后先跑一次：此时 pageAll=0，底栏全部置灰，等正文渲染完再放开
 	rd_updateBar();
 	// 进来先亮着：短页滚不动、不会触发滚动收起，所以不必再靠内容长度去猜
@@ -604,12 +808,32 @@ public void rd_render(int p, JSONObject chunk) {
 	ui_statusIcons(bgIdx != 3);
 	wv.loadDataWithBaseURL("https://gede.5read.com/", rd_html(html, bgIdx), "text/html", "UTF-8", null);
 
+	// 旋转触发的重渲染：等新内容高度稳定后回到原来的进度比例
+	Object rr = ui_get("rd.restoreRatio");
+	if (rr != null) {
+		ui_reg("rd.restoreRatio", null);
+		float ratio = 0f;
+		try {
+			ratio = Float.parseFloat(String.valueOf(rr));
+		} catch (Throwable t) {
+		}
+		rd_scrollRestore(wv, ratio, 12, -1);
+	}
+
 	rd_saveProgress();
 	rd_updateBar();
 }
 
 public String rd_html(String body, int bgIdx) {
 	i.fn("store");
+	// 末尾的空段落会带 margin-top，去掉它才能让操作栏贴住最后一行文字
+	for (int k = 0; k < 3; k++) {
+		body = body.replace("<p></p>", "");
+		body = body.replace("<p> </p>", "");
+		body = body.replace("<p>&nbsp;</p>", "");
+		body = body.replace("<p><br></p>", "");
+		body = body.replace("<p><br/></p>", "");
+	}
 	int fs = 17;
 	int f = st_readerFont();
 	if (f == 0) {
@@ -641,11 +865,18 @@ public String rd_html(String body, int bgIdx) {
 	sb.append("html,body{margin:0;padding:0;background:").append(bg).append(";color:").append(ink).append(";}");
 	sb.append("body{font-size:").append(fs).append("px;line-height:").append(lh);
 	sb.append(";letter-spacing:").append(ls);
-	// 底边距要盖住底栏（48dp）还留口气：底栏浮在正文上，最后一行不能被它压住
-	sb.append(";padding:10px 18px 76px 18px;overflow-x:hidden;");
+	// 上下边距都放在 body 上：容器铺到屏幕上下边缘，body padding 属于滚动内容，
+	// 下滑后会移出屏幕；底部还要盖住浮层底栏（48dp）与透明导航条。
+	sb.append(";padding:").append(rd_topDp()).append("px ").append(rd_sideDp())
+		.append("px ").append(rd_bottomDp()).append("px ").append(rd_sideDp())
+		.append("px;overflow-x:hidden;");
 	// 保留文字可选：长按能选中、系统菜单能复制（默认行为，不覆盖）
 	sb.append("-webkit-user-select:text;user-select:text;}");
-	sb.append("p{margin:0 0 .6em 0;text-align:justify;text-justify:inter-ideograph;}");
+	// 段距放在 margin-top：内容底部就不会再带一段外边距，操作栏能贴住最后一行
+	sb.append("p{margin:.6em 0 0 0;text-align:justify;text-justify:inter-ideograph;}");
+	sb.append("p:first-of-type{margin-top:0;}");
+	// 服务端正文末尾会跟一个空 <p></p>；已先删掉，这里再兜一层
+	sb.append("p:empty{display:none;}");
 	sb.append("img{max-width:100%!important;height:auto!important;display:block;margin:8px auto;}");
 	sb.append("</style></head><body>");
 	sb.append(body);
@@ -766,6 +997,7 @@ public void rd_barApply() {
 		LinearLayout nb = rd_bar();
 		ui_reg("rd.bar", nb);
 		parent.addView(nb, new FrameLayout.LayoutParams(-1, ui_dp(48), Gravity.BOTTOM));
+		rd_barPlace(nb);
 		rd_updateBar();
 		// 换底色不该顺手把底栏弹出来：沿用当前显隐
 		if (on) {
@@ -831,8 +1063,12 @@ public void rd_updateBar() {
 }
 
 // 触底区宽度：距正文末尾这么近就算「读到底了」，底栏在这个区域里恒显示
+// 自动弹出操作栏的距离：只能在正文最后一行的下方空白里弹，不能盖住正文。
+// body 底边距 = 76+nav，操作栏高 = 48+nav，差 28dp；不再额外留空隙，
+// 正文底边刚到操作栏顶边就弹出。
 public int rd_endZone() {
-	return ui_dp(120);
+	int d = rd_bottomDp() - (48 + rd_navBottomDp());
+	return d > 0 ? ui_dp(d) : 0;
 }
 
 // 是否已进入触底区（含正文不满一屏、压根没得滚的情况由调用方按 y==oldY 过滤）
@@ -934,12 +1170,37 @@ public void rd_sheetShow() {
 	d.setContentView(rd_sheetContent());
 	rd_sheetTint(d);
 	d.show();
+	rd_sheetExpand(d);
+}
+
+// BottomSheetBehavior 默认 PEEK_HEIGHT_AUTO：横屏时 parentH - parentW*9/16 为负，
+// 回落到 peekHeightMin(64dp) 并停在 collapsed，只露出很小一截。内容本来就够短，
+// 直接跳过 collapsed 展开到完整高度。
+public void rd_sheetExpand(BottomSheetDialog d) {
+	try {
+		int id = activity.getResources().getIdentifier("design_bottom_sheet", "id", activity.getPackageName());
+		if (id <= 0) {
+			ui_log("sheet expand: id not found");
+			return;
+		}
+		View sheet = d.findViewById(id);
+		if (sheet == null) {
+			ui_log("sheet expand: view null");
+			return;
+		}
+		BottomSheetBehavior b = BottomSheetBehavior.from(sheet);
+		b.setSkipCollapsed(true);
+		b.setState(BottomSheetBehavior.STATE_EXPANDED);
+	} catch (Throwable t) {
+		ui_log("sheet expand " + t);
+	}
 }
 
 // dialog 自带白底，换成纸色；容器 id 用 getIdentifier 取，避免在 BeanShell 里引用 R 类
 public void rd_sheetTint(BottomSheetDialog d) {
 	try {
-		int id = activity.getResources().getIdentifier("design_bottom_sheet", "id", "com.google.android.material");
+		// Material 的资源在 iApp 里并进宿主包，不能用 "com.google.android.material" 查
+		int id = activity.getResources().getIdentifier("design_bottom_sheet", "id", activity.getPackageName());
 		if (id <= 0) {
 			ui_log("sheet tint: id not found");
 			return;
