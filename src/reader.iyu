@@ -10,6 +10,8 @@ call(null, "mjava", "reader.first")
 call(null, "mjava", "reader.second")
 </eventItme><eventItme type="resume">
 call(null, "mjava", "reader.again")
+</eventItme><eventItme type="pause">
+call(null, "mjava", "reader.paused")
 </eventItme><eventItme type="downkey">
 call(null, "mjava", "reader.key", st_kC)
 </eventItme></UIEventset>

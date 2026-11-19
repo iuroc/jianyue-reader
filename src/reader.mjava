@@ -52,6 +52,20 @@ public void again() {
 	rd_insets();
 }
 
+// 离开阅读页时恢复系统栏：否则下一个页面 resume 的瞬间可能读到 bars=0，
+// 安全区少留底部 padding（详情页“开始阅读”贴着导航条就是这个原因）。
+public void paused() {
+	try {
+		activity.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+		WindowInsetsController wic = activity.getWindow().getInsetsController();
+		if (wic != null) {
+			wic.show(WindowInsets.Type.systemBars());
+		}
+	} catch (Throwable t) {
+		ui_log("rd paused " + t);
+	}
+}
+
 // 阅读页全沉浸：状态栏和底部导航栏都藏起来，边缘滑动可临时唤出（随后自动收回）。
 // 导航栏隐藏后横屏不再有左侧 130px 的让位，正文/底栏可以真正贴边。
 public void rd_fullscreen() {

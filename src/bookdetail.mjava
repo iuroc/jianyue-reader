@@ -20,16 +20,36 @@ public void first() {
 	i.fn("widgets");
 	ui_init(ui_root());
 	build();
+	// second() 里应用 insets 后再显示，避免首帧按 0 padding 排版
+	View safe = ui_layer("safe");
+	if (safe != null) {
+		safe.setVisibility(View.INVISIBLE);
+	}
 }
 
 public void second() {
 	i.fn("ui");
 	ui_insets();
+	// 首帧前不显示内容：insets 就位后再显示，避免底部按钮先贴底再上移
+	View safe = ui_layer("safe");
+	if (safe != null) {
+		safe.setVisibility(View.VISIBLE);
+	}
 }
 
 public void again() {
 	i.fn("ui");
-	ui_insets();
+	// 不在 resume 瞬间读 insets：系统栏可能还在恢复动画，读到 0 会把已有 padding 清掉。
+	// 已有 padding 先保留，等系统栏稳定后再统一刷新。
+	activity.getWindow().getDecorView().postDelayed(new Runnable() {
+		public void run() {
+			ui_insets();
+			View safe = ui_layer("safe");
+			if (safe != null) {
+				safe.setVisibility(View.VISIBLE);
+			}
+		}
+	}, 350);
 }
 
 public void back() {

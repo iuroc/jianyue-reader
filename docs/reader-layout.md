@@ -54,10 +54,21 @@
 - `show()` 后取 `BottomSheetBehavior`：`setSkipCollapsed(true)` + `setState(STATE_EXPANDED)`。
 - `design_bottom_sheet` 资源 id 用 `activity.getPackageName()` 查（Material 资源已并进宿主包）。
 
+## 页面切换与安全区
+
+- 阅读器 `pause` 事件恢复系统栏（`show(systemBars())` + 清沉浸式 flags），否则下一个页面
+  `resume` 的瞬间可能读到 `bars=0`，安全区少留底部 padding。
+- 详情页首次进入：`first()` 建完后把 `safe` 设为 `INVISIBLE`，`second()` 应用 insets 后再 `VISIBLE`，
+  避免首帧按 0 padding 排版（“开始阅读”先贴屏幕底再上移）。
+- 详情页 `resume`：不要在瞬间调用 `ui_insets()`——系统栏还在恢复动画，读到 0 会把已有 padding 清掉；
+  延迟 350ms 再统一刷新。
+- 首页底部 Tab 条不跳：首页 Activity 是复用的，padding 在第一次进入时已经设好；新 Activity 才需要首帧隐藏。
+
 ## 验证状态
 
 - 红米 Note 8 / API 30：全屏、顶部/底部/挖孔边距、操作栏贴文、Aa 展开、旋转恢复 ✅ 2026-11-19。
 - 腾讯应用宝容器 display 2 / API 33（无系统栏、无挖孔的全面屏）：阅读页正常 ✅ 2026-11-19。
+- 红米 Note 8：阅读器 ↔ 详情页切换，底部按钮不再跳变 ✅ 2026-11-20。
 - 打包 APK：❓ 未验；怎么验：打包后装到红米，检查四边边距、横竖屏旋转与 Aa 抽屉。
   打包版 `getRootWindowInsets()` 可能返回 null，`ui_insets` 会走 `status_bar_height` 兜底，
   顶部边距可能与开发模式不同。
